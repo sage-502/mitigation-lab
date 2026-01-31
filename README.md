@@ -1,6 +1,6 @@
 # mitigation-lab
 
-바이너리 보호기법 실습 기록
+바이너리 보호기법 공부 기록 모음집
 
 이 레포는 pwnable-lab의 연계 실습으로,
 각종 **바이너리 보호기법(mitigations)** 이
