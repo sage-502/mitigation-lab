@@ -21,15 +21,15 @@ mitigation-lab/
 ├── setup.sh               // 실습 환경 세팅 스크립트
 ├── env.md                 // 공통 환경, ABI, 호출 규약 등
 ├── stack-canary/
-│   ├── vuln.c
-│   ├── build.sh
-│   ├── gdb.md             // 브레이크포인트, 관찰 포인트
-│   └── notes.md           // 왜 막히는지
+│   ├── sample.c           // 실습 소스코드
+│   ├── build.sh           // 소스 빌드 스크립트
+│   ├── analysis.md        // 관찰 포인트, gdb/분석 명령어 기록
+│   └── README.md          // 보호기법 설명, 바이너리 분석
 ├── nx/
 ├── aslr/
 ├── pie/
 ├── relro/
-└── combo/
-    ├── canary+aslr/
-    └── full-mitigations/
+├── combo/
+├── memo.md                // 메모
+└── images/                // VM 스샷
 ```
