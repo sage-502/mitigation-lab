@@ -286,7 +286,13 @@ NX 동작을 확인하기 위해 BOF 취약점을 포함시켰다. </br>
 
 * `-m32`
 * `-O0`
-* `-fno-stack-protector \`
+* `-fno-stack-protector`
+* `-fno-omit-frame-pointer`
+* `-fno-pie -fno-pic -no-pie`
+
+nx-off : `-z execstack`
+
+nx-on : `-z noexecstack`
 
 ---
 
@@ -392,3 +398,7 @@ process XXXX is executing new program: /usr/bin/dash
 * gdb 환경과 일반 실행 환경은 스택 주소가 다를 수 있다.
 * 이는 환경 변수 및 디버깅 오버헤드 차이 때문이다.
 * 본 실습은 NX 동작 관찰이 목적이므로 gdb 기준으로 분석하였다.
+
+---
+
+## 6. NX on 바이너리 분석
