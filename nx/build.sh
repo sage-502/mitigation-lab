@@ -10,68 +10,48 @@ BIN2="$NAME-on"
 
 echo "[*] build $LAB_NAME"
 
-# ---------------------------
-# 1. /tmp 디렉터리 준비
-# ---------------------------
-echo "[*] preparing $TMP_DIR"
+# 1. 디렉터리 준비
 rm -rf "$TMP_DIR"
 mkdir -p "$TMP_DIR"
 
-
-# ---------------------------
-# 2. 소스코드 복사
-# ---------------------------
+# 2. 소스 복사
 cp "$SRC" "$TMP_DIR/"
 echo "[+] source copied"
 
-# ---------------------------
-# 3. 컴파일 (32bit)
-# ---------------------------
-echo "[*] compiling binary"
+# 3. 컴파일
+echo "[*] compiling binaries"
 
+# OFF
 gcc -m32 "$TMP_DIR/$SRC" -o "$TMP_DIR/$BIN1" \
     -O0 \
     -fno-stack-protector \
     -z execstack \
-    -no-pie \
+    -no-pie
 
+# ON
 gcc -m32 "$TMP_DIR/$SRC" -o "$TMP_DIR/$BIN2" \
-    -O0
+    -O0 \
     -fno-stack-protector \
-    -z noexecstack \ 
+    -z noexecstack \
     -no-pie
 
 echo "[+] build complete"
 
-# ---------------------------
 # 4. 권한 설정
-# ---------------------------
-chown root:root "$TMP_DIR/$BIN1" "$TMP_DIR/$BIN2"
-chmod 2755 "$TMP_DIR/$BIN1" "$TMP_DIR/$BIN2"
+sudo chown root:root "$TMP_DIR/$BIN1" "$TMP_DIR/$BIN2"
+sudo chmod 4755 "$TMP_DIR/$BIN1" "$TMP_DIR/$BIN2"
 
-
-
-# ---------------------------
 # 5. 출력
-# ---------------------------
-
-echo "[+] mitigation disabled binary: $TMP_DIR/$BIN1"
 echo ""
-file $TMP_DIR/$BIN
-echo ""
-checksec --file=$TMP_DIR/$BIN
-
-echo "[+] mitigation enabled binary: $TMP_DIR/$BIN2"
-echo ""
-file $TMP_DIR/$BIN
-echo ""
-checksec --file=$TMP_DIR/$BIN
+echo "[+] $NAME disabled binary: $TMP_DIR/$BIN1"
+file "$TMP_DIR/$BIN1"
+checksec --file="$TMP_DIR/$BIN1"
 
 echo ""
-file $TMP_DIR/$BIN
-echo ""
-checksec --file=$TMP_DIR/$BIN
+echo "[+] $NAME enabled binary: $TMP_DIR/$BIN2"
+file "$TMP_DIR/$BIN2"
+checksec --file="$TMP_DIR/$BIN2"
 
 echo ""
-echo "[!] Run this manually if needed:"
+echo "[!] Disable ASLR if needed:"
 echo "    echo 0 | sudo tee /proc/sys/kernel/randomize_va_space"
