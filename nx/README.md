@@ -202,22 +202,29 @@ mprotect(addr, size, PROT_READ | PROT_WRITE | PROT_EXEC);
 
 ---
 
-## 3. NX 확인 방법
+## 3. NX 확인
 
 ### 3.1 정적 분석 (바이너리 기준)
 
 #### checksec
 
-```bash
-checksec ./vuln
+```
+checksec --file=./vuln
 ```
 
 출력 예:
+```bash
+$ checksec --file=/tmp/nx-lab/nx-off
+NX          
+NX disabled
 
-```
-NX enabled
+$ checksec --file=/tmp/nx-lab/nx-on
+NX         
+NX enabled 
 ```
 
+* disabled → NX 비활성
+* enabled  → NX 비활성
 
 #### readelf
 
@@ -228,11 +235,15 @@ readelf -l ./vuln | grep GNU_STACK
 출력 예:
 
 ```
-GNU_STACK      ...  RW
+$ readelf -l /tmp/nx-lab/nx-off | grep GNU_STACK
+  GNU_STACK      0x000000 0x00000000 0x00000000 0x00000 0x00000 RWE 0x10
+
+$ readelf -l /tmp/nx-lab/nx-on | grep GNU_STACK
+  GNU_STACK      0x000000 0x00000000 0x00000000 0x00000 0x00000 RW  0x10
 ```
 
-* RW  → NX 활성
 * RWE → NX 비활성
+* RW  → NX 활성
 
 
 ### 3.2 동적 확인 (실행 중 프로세스 기준)
@@ -243,22 +254,17 @@ GNU_STACK      ...  RW
 cat /proc/<pid>/maps
 ```
 
-stack 영역이:
-
+출력 예:
 ```
-rw-p  [stack]
-```
+$ sudo cat /proc/<nx-off pid>/maps | grep stack
+fffdd000-ffffe000 rwxp 00000000 00:00 0                                  [stack]
 
-이면 실행 불가.
-
-만약:
-
-```
-rwxp
+$ sudo cat /proc/<nx-on pid>/maps | grep stack
+fffdd000-ffffe000 rw-p 00000000 00:00 0                                  [stack]
 ```
 
-이면 실행 가능.
-
+* rwxp → NX 비활성
+* rw-p  → NX 활성
 
 #### gdb
 
@@ -267,6 +273,12 @@ info proc mappings
 ```
 
 각 매핑의 권한을 직접 확인할 수 있다.
+
+출력 예:
+```
+0xfffdd000 0xffffe000    0x21000        0x0  rw-p   [stack] → NX 활성
+0xfffdd000 0xffffe000    0x21000        0x0  rwxp   [stack] → NX 비활성
+```
 
 ---
 
@@ -363,13 +375,17 @@ eip = 0xffffcecc
 #### 2) 스택 영역 디스어셈블
 
 ```
-0xffffcecc: nop
-0xffffcecd: nop
-0xffffcece: nop
-0xffffcecf: nop
-0xffffced0: xor    eax,eax
-...
-0xffffcee6: int    0x80
+(gdb) ni
+0xffffcecc in ?? ()
+(gdb) x/16i $eip
+=> 0xffffcecc:	nop
+   0xffffcecd:	nop
+   0xffffcece:	nop
+   0xffffcecf:	nop
+   0xffffced0:	xor    eax,eax
+   ...
+   0xffffcee6:	int    0x80
+   0xffffcee8:	inc    ecx
 ```
 
 → NOP sled 진입 후 shellcode 실행 확인
@@ -378,7 +394,10 @@ eip = 0xffffcecc
 #### 3) execve 실행 확인
 
 ```
-process XXXX is executing new program: /usr/bin/dash
+(gdb) si
+0xffffcee6 in ?? ()
+(gdb) si
+process 5162 is executing new program: /usr/bin/dash
 ```
 
 → 쉘코드가 `execve("/bin/sh")` 성공적으로 호출
@@ -402,3 +421,68 @@ process XXXX is executing new program: /usr/bin/dash
 ---
 
 ## 6. NX on 바이너리 분석
+
+### 6.4. 실행 흐름 관찰 (gdb)
+
+5번 섹션과 동일한 페이로드를 주입하여 관찰했다.
+
+#### 1) ret overwrite 확인
+
+```
+eip = 0xffffcecc
+```
+
+→ 스택 주소로 점프 성공
+
+
+#### 2) 스택 영역 디스어셈블
+
+```
+(gdb) ni
+0xffffcecc in ?? ()
+(gdb) x/16i $eip
+=> 0xffffcecc:	nop
+   0xffffcecd:	nop
+   0xffffcece:	nop
+   0xffffcecf:	nop
+   0xffffced0:	xor    eax,eax
+   ...
+   0xffffcee6:	int    0x80
+   0xffffcee8:	inc    ecx
+```
+
+#### 3) SIGSEGV 발생 확인
+
+```
+(gdb) si
+
+Program received signal SIGSEGV, Segmentation fault.
+0xffffcecc in ?? ()
+```
+
+→ 스택 영역에서 실행을 시도하자 SIGSEGV 발생.
+
+### 6.6 관찰 결과
+
+NX 활성화 상태에서도:
+
+* return address overwrite 성공
+* EIP가 스택 주소로 이동
+
+그러나 single-step(si) 수행 시:
+```
+Program received signal SIGSEGV, Segmentation fault.
+0xffffcecc in ?? ()
+```
+
+이는 해당 스택 페이지가 실행 권한을 가지지 않기 때문에
+instruction fetch 단계에서 CPU가 예외를 발생시킨 것이다.
+
+## 7. 정리
+
+| 단계 | NX disabled | NX enabled |
+|------|-------------|------------|
+| ret overwrite | 성공 | 성공 |
+| 스택 점프 | 성공 | 성공 |
+| instruction fetch | 성공 | SIGSEGV |
+| execve 호출 | 성공 | 불가 |
