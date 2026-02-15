@@ -23,7 +23,6 @@ mitigation-lab/
 ├── stack-canary/
 │   ├── sample.c           // 실습 소스코드
 │   ├── build.sh           // 소스 빌드 스크립트
-│   ├── analysis.md        // 관찰 포인트, gdb/분석 명령어 기록
 │   └── README.md          // 보호기법 설명, 바이너리 분석
 ├── nx/
 ├── aslr/
