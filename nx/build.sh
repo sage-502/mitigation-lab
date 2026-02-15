@@ -25,15 +25,18 @@ echo "[*] compiling binaries"
 gcc -m32 "$TMP_DIR/$SRC" -o "$TMP_DIR/$BIN1" \
     -O0 \
     -fno-stack-protector \
+    -fno-omit-frame-pointer \
     -z execstack \
-    -no-pie
+    -fno-pie -fno-pic -no-pie
 
 # ON
 gcc -m32 "$TMP_DIR/$SRC" -o "$TMP_DIR/$BIN2" \
     -O0 \
     -fno-stack-protector \
+    -fno-omit-frame-pointer \
     -z noexecstack \
-    -no-pie
+    -fno-pie -fno-pic -no-pie
+
 
 echo "[+] build complete"
 
