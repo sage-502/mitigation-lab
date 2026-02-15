@@ -1,0 +1,13 @@
+#include <stdio.h>
+#include <unistd.h>
+
+void vuln() {
+    char buf[100];
+    gets(buf);
+}
+
+int main() {
+    setregid(getegid(), getegid());
+    vuln();
+    return 0;
+}
