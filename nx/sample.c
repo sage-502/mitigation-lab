@@ -7,7 +7,7 @@ void vuln() {
 }
 
 int main() {
-    setregid(getegid(), getegid());
+    setreuid(geteuid(), geteuid());
     vuln();
     return 0;
 }
