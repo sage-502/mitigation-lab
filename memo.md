@@ -8,7 +8,7 @@
 
 도입 순서대로
 
-- [ ] nx
+- [x] nx
 - [ ] stack canary
 - [ ] aslr
 - [ ] pie
