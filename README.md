@@ -20,11 +20,12 @@
 mitigation-lab/
 ├── setup.sh               // 실습 환경 세팅 스크립트
 ├── env.md                 // 공통 환경, ABI, 호출 규약 등
-├── stack-canary/
+├── nx/
 │   ├── sample.c           // 실습 소스코드
 │   ├── build.sh           // 소스 빌드 스크립트
+│   ├── payload.py         // 보호기법 동작 확인용 페이로드 (혹은 exploit.py)
 │   └── README.md          // 보호기법 설명, 바이너리 분석
-├── nx/
+├── stack-canary/
 ├── aslr/
 ├── pie/
 ├── relro/
@@ -32,3 +33,12 @@ mitigation-lab/
 ├── memo.md                // 메모
 └── images/                // VM 스샷
 ```
+
+---
+
+## 학습 순서
+1. [nx](https://github.com/sage-502/mitigation-lab/tree/main/nx)
+2. stack-canary
+3. aslr
+4. pie
+5. relro
