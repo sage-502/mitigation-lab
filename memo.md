@@ -6,9 +6,10 @@
 
 ## Want to do
 
-- [ ] Stack Canary
-- [ ] NX
-- [ ] ASLR
-- [ ] PIE
-- [ ] RELRO
+도입 순서대로
 
+- [ ] nx
+- [ ] stack canary
+- [ ] aslr
+- [ ] pie
+- [ ] relro
