@@ -73,6 +73,8 @@ Canary가 도입된 이후,
 즉, 공격은 단순 overwrite에서
 **정보 유출 + 제어 흐름 탈취의 결합 구조**로 진화했다.
 
+※ 전작 pwnable-lab 레포지토리의 [fsb-canary-leak](https://github.com/sage-502/pwnable-lab/tree/main/fsb-canary-leak), [bof-fsb-canary-bypass](https://github.com/sage-502/pwnable-lab/tree/main/bof-fsb-canary-bypass) 참고
+
 ---
 
 ## 2. Canary 동작 방식 ── 컴파일러가 추가하는 것
@@ -131,7 +133,8 @@ Aborted (core dumped)
 
 > **노트 ── Canary 변조 확인 방식**
 >
-> 컴파일 옵션에 따라 `xor`, `sub`, `cmp` 등을 사용할 수 있다.
+> 컴파일러 버전이나 옵션에 따라 `xor`, `sub`, `cmp` 등을 canary 변조 확인에 사용할 수 있다.</br>
+> ※ 추측. `sub` 외에는 아직 확인 못함.
 
 ---
 
@@ -654,7 +657,8 @@ Canary가 활성화된 바이너리에서
 > Stack Canary가 추가되며 레지스터의 역할이 변경됨에 따라
 > prologue에서 eax에 함수의 인자를 복사하는 줄이 추가되었다.
 >
-> 이는 `-O0` 옵션이 최적화를 수행하지 않기 때문에 나타난다.
+> 이는 -O0에서 레지스터 재사용 최적화가 수행되지 않기 때문에 나타난다.</br>
+> ※ [appendix.md](https://github.com/sage-502/mitigation-lab/blob/main/stack-canary/appendix.md) 참조
 
 ### 7.2 Epilogue 분석
 
