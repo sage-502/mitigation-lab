@@ -133,7 +133,6 @@ main() 진입
 ```
 
 
-
 ### 2.1 사용자가 프로그램 실행
 
 ```
@@ -145,27 +144,154 @@ main() 진입
 
 ### 2.2 커널이 ELF 파일 읽기
 
-커널은 ELF Header와 Program Header를 읽는다.
+커널은 ELF 파일의 전체 구조를 사용하는 것이 아니라,
+실행에 필요한 최소한의 정보만을 읽는다.
 
-※ Section Header는 실행에 사용되지 않는다.
+특히 다음 두 구조가 중요하다:
+
+* ELF Header
+* Program Header Table
+
+#### ELF 파일의 기본 구조:
+
+```
++---------------------------+
+| ELF Header                |
++---------------------------+
+| Program Header Table      |
++---------------------------+
+| Section Header Table      |
++---------------------------+
+| Section Data (.text 등)   |
++---------------------------+
+```
+
+#### ELF Header 구조:
+
+```
++---------------------------+
+| e_ident (매직 넘버 등)     |
+| e_type (ET_EXEC / ET_DYN) |
+| e_entry (entry point)     |
+| e_phoff (PH 위치)         |
+| e_shoff (SH 위치)         |
+| e_phnum (PH 개수)         |
+| e_shnum (SH 개수)         |
++---------------------------+
+```
+
+커널은 이 중에서 특히:
+
+* e_entry : 프로그램이 시작될 가상 주소(Entry Point) = CPU가 처음 점프할 주소
+* e_phoff : ELF 파일 내에서 Program Header Table이 시작하는 파일 오프셋
+* e_phnum : Program Header의 개수
+
+을 사용한다.
+
+#### Program Header Table 구조:
+
+```
++--------------------------------------+
+| Type (PT_LOAD 등)                   |
+| Offset                               |
+| Virtual Address (VirtAddr)           |
+| File Size                            |
+| Memory Size                          |
+| Flags (R/W/X)                        |
++--------------------------------------+
+```
+
+커널은 Program Header의 `PT_LOAD` 항목을 기준으로
+각 세그먼트를 `mmap()` 한다.
+
+※ Section Header는 실행 시 사용되지 않는다.
 
 
+실행 흐름:
+```
+execve()
+  ↓
+커널이 ELF Header 읽음
+  ↓
+e_phoff 확인
+  ↓
+e_phnum 만큼 Program Header 읽음
+  ↓
+PT_LOAD 세그먼트 mmap
+  ↓
+e_entry로 점프
+```
 
 ### 2.3 커널이 메모리 배치 (ASLR 적용 시점)
 
-Program Header의 `PT_LOAD` 세그먼트를 기준으로
+커널은 Program Header의 `PT_LOAD` 세그먼트를 기준으로
 각 영역을 `mmap()` 한다.
+
+#### mmap()
+
+`mmap()`은 파일이나 메모리 영역을 프로세스 가상 주소 공간에 연결(mapping)하는 시스템 콜이다.
+
+mmap의 실제 호출 형태는 다음과 같다:
+
+``` c
+void *mmap(
+    void *addr,
+    size_t length,
+    int prot,
+    int flags,
+    int fd,
+    off_t offset
+);
+```
+
+예시:
+
+커널이 ELF를 실행할 때, 커널은 Program Header에서 다음과 같은 정보를 읽는다.
+```
+Type: PT_LOAD
+Offset: 0x000000
+VirtAddr: 0x08048000
+FileSize: 0x1000
+MemSize: 0x2000
+Flags: R E
+```
+
+커널은 이걸 읽고 다음과 같이 매핑한다.
+``` c
+mmap(0x08048000,
+     0x2000,
+     PROT_READ|PROT_EXEC,
+     MAP_PRIVATE|MAP_FIXED,
+     fd,
+     0x000000);
+```
+
+이것이 ELF 로딩에서의 mmap의 의미이다.
+
+정리하자면 mmap은 다음과 같이 메모리를 할당한다.
+
+1. 가상 메모리 영역(VMA) 생성
+2. 페이지 테이블 설정
+3. 실제 페이지는 접근 시 할당(lazy allocation)
 
 #### 1) non-PIE (ET_EXEC)
 
 * 고정 VirtAddr 사용
 * base 고정
 
+``` c
+mmap(0x08048000, ...)
+```
+
 #### 2) PIE / 공유 라이브러리 (ET_DYN)
 
 * VirtAddr가 0 기반
 * 어느 위치에든 매핑 가능
 * 커널이 랜덤 base 선택
+
+``` c
+mmap(NULL, ...)
+```
 
 이때 생성된 base 주소는
 커널의 VMA 구조에 기록되며
@@ -177,27 +303,67 @@ Program Header의 `PT_LOAD` 세그먼트를 기준으로
 커널은 스택 상단 주소를 랜덤화하고
 초기 ESP를 해당 위치로 설정한다.
 
+즉, 프로세스 생성 시
 
-### 2.5 ld-linux 실행
+1. 커널이 stack용 VMA 생성
+2. 랜덤 top 주소 설정
+
+stack 배치는 전부 커널이 처리한다.
+
+### 2.5 ld-linux(동적 링커)
+
+#### 1. libc를 mmap
 
 동적 링크 바이너리의 경우,
-ld-linux가 libc 등을 `mmap()` 한다.
+ld-linux(동적 링커)가 ELF 안에 있는 동적 섹션(.dynamic)을 보고 libc 등을 `mmap()` 한다.
 
-이때도 커널이 랜덤 base를 반환한다.
+이때 보는 것은 
 
+* `PT_DYNAMIC`
+* 그 안의 `DT_*` 엔트리들
 
-### 2.6 relocation
+이다.
 
-ld-linux는 각 라이브러리의 base를 기준으로
+실제 동작 흐름은 다음과 같다:
+
+1. ld-linux가 main의 Program Header 읽음 : `PT_DYNAMIC` 위치 확인
+2. dynamic section 파싱
+3. DT_NEEDED 처리 : 필요한 라이브러리 정보 확인</br>
+   해당 파일을 찾아 → open() → mmap() 호출</br>
+   이때 커널이 랜덤 base 반환(ASLR 적용)</br>
+
+즉, ld-linux가 필요한 라이브러리를 확인하고 mmap을 요청하면,
+커널이 ASLR 정책에 따라 랜덤 base를 결정하여 반환한다.
+
+#### 2. relocation
+
+libc가 mmap되면 ld-linux는 각 라이브러리의 base를 기준으로
 GOT, PLT 등의 실제 주소를 계산하여 채운다.
 
-
-### 2.7 main() 진입
+#### 3. main() 진입
 
 이 시점에서 프로세스의 주소 공간은
 이미 랜덤화가 완료된 상태이다.
 
 ASLR은 프로세스 lifetime 동안 유지된다.
+
+> **노트 ── ASLR의 주체**
+>
+> ASLR의 구현 주체는 커널이며, ld-linux는 ASLR을 활용하는 사용자 공간 프로그이다.
+>
+> 커널이 하는 일:
+> 
+> * `execve()` 처리
+> * `mmap()` 처리
+> * VMA 생성
+> * 랜덤 base 선택
+> * stack top 랜덤화
+>
+> ld-linux가 하는 일:
+>
+> * `DT_NEEDED` 확인
+> * 라이브러리 파일 open
+> * `mmap()` 요청 
 
 ---
 
@@ -205,10 +371,18 @@ ASLR은 프로세스 lifetime 동안 유지된다.
 
 ### 3.1 랜덤 생성 방법
 
-커널은 내부 난수 생성기를 사용하여
+커널은 내부 난수 생성기인 CRNG (Cryptographically Secure RNG)를 사용하여
 mmap base에 오프셋을 더한다.
 
-랜덤 값은 페이지 단위(보통 4KB)로 정렬된다.
+
+| 개념            | 의미                        |
+| ------------- | ------------------------- |
+| mmap_base     | mmap 영역 시작 기준 주소          |
+| random_offset | ASLR 난수                   |
+| 최종 base       | mmap_base + random_offset |
+
+CPU와 커널은 메모리를 페이지 단위로 관리하므로, 매핑 주소도 페이지 경계에 맞아야 한다. </br>
+따라서 랜덤 값은 페이지 단위(보통 4KB)로 정렬된다.
 
 
 ### 3.2 base 저장 위치
@@ -219,6 +393,8 @@ mmap base에 오프셋을 더한다.
 * mm_struct 내부 구조
 
 에 저장된다.
+
+# 여기서부터... (VMA 설명, vm_start를 랜덤하게 설정하는 것이 ASLR)
 
 사용자 공간에서는:
 
