@@ -509,7 +509,7 @@ echo (설정값) | sudo tee /proc/sys/kernel/randomize_va_space
 실습에 사용한 코드는 다음과 같다.
 
 ``` c
-// filename: vuln.c
+// filename: sample.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
