@@ -312,7 +312,7 @@ stack 배치는 전부 커널이 처리한다.
 
 ### 2.5 ld-linux(동적 링커)
 
-#### 1. libc를 mmap
+#### 1) libc를 mmap
 
 동적 링크 바이너리의 경우,
 ld-linux(동적 링커)가 ELF 안에 있는 동적 섹션(.dynamic)을 보고 libc 등을 `mmap()` 한다.
@@ -335,12 +335,12 @@ ld-linux(동적 링커)가 ELF 안에 있는 동적 섹션(.dynamic)을 보고 l
 즉, ld-linux가 필요한 라이브러리를 확인하고 mmap을 요청하면,
 커널이 ASLR 정책에 따라 랜덤 base를 결정하여 반환한다.
 
-#### 2. relocation
+#### 2) relocation
 
 libc가 mmap되면 ld-linux는 각 라이브러리의 base를 기준으로
 GOT, PLT 등의 실제 주소를 계산하여 채운다.
 
-#### 3. main() 진입
+#### 3) main() 진입
 
 이 시점에서 프로세스의 주소 공간은
 이미 랜덤화가 완료된 상태이다.
@@ -387,33 +387,61 @@ CPU와 커널은 메모리를 페이지 단위로 관리하므로, 매핑 주소
 
 ### 3.2 base 저장 위치
 
-랜덤화된 base 주소는:
+#### 커널 메모리
 
-* 커널의 VMA (Virtual Memory Area)
-* mm_struct 내부 구조
+리눅스 커널은 `mm_struct` 라는 memory descriptor를 만들어 각 프로세스에 할당하여 메모리를 관리한다.</br>
+그리고 `mm_struct` 내부에는 각 영역 별로 `vm_area_struct`라는 구조체가 존재하며, 
+그 구조체에 해당 영역의 정보들이 기록되어 있다. 
 
-에 저장된다.
-
-# 여기서부터... (VMA 설명, vm_start를 랜덤하게 설정하는 것이 ASLR)
-
-사용자 공간에서는:
-
+대략적인 구조:
 ```
-/proc/<pid>/maps
+struct task_struct
+    └── struct mm_struct *mm
+            ├── mmap        → VMA 연결 리스트(또는 트리)
+            ├── mmap_base   → mmap 기준 주소
+            ├── start_brk   → heap 시작
+            ├── brk         → 현재 heap 끝
+            ├── start_stack → 스택 시작 주소
+            └── ...
 ```
 
-를 통해 확인 가능하다.
+그리고 우리가 base라고 부르는 것은 각 `vm_area_struct`의 `vm_start`로 저장되어 있는 값이다.
+
+대략적인 구조:
+```
+struct vm_area_struct {
+    unsigned long vm_start;   // 시작 주소
+    unsigned long vm_end;     // 끝 주소
+    unsigned long vm_flags;   // r/w/x
+    struct file *vm_file;     // 파일 기반이면 파일 정보
+    ...
+};
+```
+
+즉, ASLR은 base 값을 따로 변수에 저장하는 것이 아니라, </br>
+각 영역의 VMA를 생성할 때, `vm_start` 값을 랜덤하게 설정하는 것이다.
+
+#### 사용자 공간
+
+앞서 서술한 `mm_struct`는 커널 메모리에 있기 때문에 사용자 공간에서는 접근이 불가능하다.</br>
+대신, `/proc` 인터페이스가 일부 정보를 노출하여 간접적으로 확인할 수 있다.
+
+사용자 공간에서는 다음과 같은 방법으로 확인 가능하다.
+
+| 확인 방법                    | 의미         |
+| ------------------------ | ---------- |
+| `/proc/<pid>/maps`       | VMA 목록     |
+| `/proc/<pid>/smaps`      | VMA 상세 정보  |
+| `gdb info proc mappings` | maps 기반 출력 |
+| `/proc/<pid>/stat`       | 일부 mm 정보   |
 
 ---
 
 ## 4. 엔트로피 (Entropy)
 
-엔트로피란
-랜덤화된 주소가 가질 수 있는 비트 수를 의미한다.
+엔트로피란 랜덤화된 주소가 가질 수 있는 비트 수를 의미한다.
 
 즉, 가능한 경우의 수의 크기이다.
-
----
 
 ### 4.1 범위 제한 원인
 
@@ -425,8 +453,6 @@ ASLR이 완전 무작위가 아닌 이유는 다음과 같다.
 
 이로 인해 랜덤화 범위는 제한적이다.
 
----
-
 ### 4.2 32bit Linux ASLR 엔트로피
 
 32bit 환경에서는 엔트로피가 비교적 낮다.
@@ -436,8 +462,6 @@ ASLR이 완전 무작위가 아닌 이유는 다음과 같다.
 * stack: 약 16~19비트
 * heap: 약 13~17비트
 * mmap/libc: 약 8~16비트
-
----
 
 ### 4.3 brute force
 
