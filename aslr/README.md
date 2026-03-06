@@ -372,7 +372,7 @@ ASLR은 프로세스 lifetime 동안 유지된다.
 ### 3.1 랜덤 생성 방법
 
 커널은 내부 난수 생성기인 CRNG (Cryptographically Secure RNG)를 사용하여
-mmap base에 오프셋을 더한다.
+**mmap base에 오프셋을 더한다**.
 
 
 | 개념            | 의미                        |
@@ -419,7 +419,7 @@ struct vm_area_struct {
 ```
 
 즉, ASLR은 base 값을 따로 변수에 저장하는 것이 아니라, </br>
-각 영역의 VMA를 생성할 때, `vm_start` 값을 랜덤하게 설정하는 것이다.
+**각 영역의 VMA를 생성할 때, `vm_start` 값을 랜덤하게 설정**하는 것이다.
 
 #### 사용자 공간
 
@@ -439,7 +439,7 @@ struct vm_area_struct {
 
 ## 4. 엔트로피 (Entropy)
 
-엔트로피란 랜덤화된 주소가 가질 수 있는 비트 수를 의미한다.
+**엔트로피**란 랜덤화된 주소가 가질 수 있는 비트 수를 의미한다.
 
 즉, 가능한 경우의 수의 크기이다.
 
@@ -466,7 +466,7 @@ ASLR이 완전 무작위가 아닌 이유는 다음과 같다.
 ### 4.3 brute force
 
 엔트로피가 낮으면
-brute force 공격이 가능해진다.
+**brute force 공격**이 가능해진다.
 
 예를 들어 16비트라면:
 
@@ -480,6 +480,81 @@ fork 서버 환경에서는
 ---
 
 ## 5. 실습 구성
+
+본 실습에서는 동일 컴파일 옵션으로 빌드된 하나의 바이너리에서, 
+ASLR 설정을 달리하여 동작 차이를 비교한다.
+
+ASLR의 설정은 다음과 같이 할 수 있다.
+```
+echo (설정값) | sudo tee /proc/sys/kernel/randomize_va_space
+```
+
+설정값 별 stack, heap, libc의 랜덤화 적용 여부:
+
+| 설정값 | 설명 | 랜덤 | 고정 |
+| ------ | ---- | ---- | ---- | 
+| 0 | 비활성화 | - | stack, heap, libc |
+| 1 | Conservative Randomization | stack, libc | heap |
+| 2 | Full Randomization | stack, heap, libc | - |
+
+이 실습에서는 0, 2를 사용한다.</br>
+목표는 다음과 같다.
+
+1. ASLR off 상태로 하드코딩 주소로 공격 성공 확인
+2. ASLR on 상태로 동일 페이로드 공격 실패 확인
+3. brute force 시행
+
+### 5.1 취약 코드
+
+실습에 사용한 코드는 다음과 같다.
+
+``` c
+// filename: vuln.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+void vuln() {
+    char buf[24];
+    puts("input:");
+    gets(buf);
+}
+
+int main() {
+    setregid(getegid(), getegid());
+    setvbuf(stdout, NULL, _IONBF, 0);
+    vuln();
+    puts("done");
+    return 0;
+}
+```
+
+#### 코드 특징
+
+* `char buf[24];` : 고정 길이 버퍼
+* `gets(buf);` : 입력 길이 제한 없음 → **Stack Buffer Overflow** 발생
+
+### 5.2 컴파일 옵션
+
+```
+gcc -m32 sample.c -o aslr \
+    -O0 \
+    -fno-stack-protector \
+    -fno-omit-frame-pointer \
+    -fno-pie \
+    -no-pie \
+    -z noexecstack
+```
+
+ASLR off:
+```
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+```
+
+ASLR on:
+```
+echo 2 | sudo tee /proc/sys/kernel/randomize_va_space
+```
 
 ---
 
