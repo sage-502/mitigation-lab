@@ -1,4 +1,4 @@
-# ASLR
+# ASLR (Address Space Layout Randomization)
 
 **ASLR (Address Space Layout Randomization)** 은
 프로세스가 실행될 때마다 주요 메모리 영역의 주소를 랜덤화하는 보호기법이다.
@@ -591,7 +591,7 @@ echo 2 | sudo tee /proc/sys/kernel/randomize_va_space
 * buf 주소 : ebp-0x20
 * offset = buf + saved ebp = 0x20 + 0x4 = 0x24
 
-### 6.2 base
+### 6.2 libc base
 
 ``` gdb
 (gdb) info proc mappings
@@ -602,7 +602,8 @@ echo 2 | sudo tee /proc/sys/kernel/randomize_va_space
 	0xf7fa1000 0xf7fa3000     0x2000   0x22f000  r--p   /usr/lib/i386-linux-gnu/libc.so.6
 	0xf7fa3000 0xf7fa4000     0x1000   0x231000  rw-p   /usr/lib/i386-linux-gnu/libc.so.6
 ```
-따라서 base = 0xf7d72000
+
+offset이 0인 첫 번째 매핑이 libc 파일의 시작이므로, libc base = 0xf7d72000
 
 ### 6.3 libc offset
 
@@ -677,14 +678,20 @@ Segmentation fault (core dumped)
 
 ### 7.2 brute force
 
-ASLR이 주소 예측을 어렵게 만들지만
-32bit 환경에서는 엔트로피가 낮아 brute force 공격이 가능하다.
-
-우선, `bruteforce.sh`로 매 프로세스 마다 페이로드를 주입하기 위해 `payload.bin`을 생성했다.
+brute force를 시도해보려 했으나, try가 3000+ 가 되어도 성공하지 않았다.</br>
+그래서 엔트로피를 확인해본 결과:
 
 ```
-$ python3 payload.py > payload.bin
+$ sudo cat /proc/sys/vm/mmap_rnd_compat_bits
+16
 ```
+
+본 환경에서 `vm.mmap_rnd_compat_bits = 16`으로 설정되어 있었으며, 이는 약 (2^{16})개의 가능한 base 주소를 의미한다.</br>
+따라서 단순 brute force 공격은 평균적으로 약 (2^{15})번의 시도를 필요로 하며, 실제 실험에서도 매우 비효율적이었다.</br>
+최신 Linux 커널에서는 ASLR 엔트로피가 비교적 크게 설정되기 때문에 brute force 공격이 현실적으로 어렵다.
+
+brute force 실습을 해보기 위해서는 VM 자체를 32bit로 설치해야 할 것 같다.</br>
+실습은 실패했지만, 엔트로피가 높은 경우 brute force는 상당히 비효율적임을 확인할 수 있었기에 섹션은 남겨두었다.
 
 ---
 
@@ -703,5 +710,5 @@ NX, Canary와 비교하면 다음과 같다.
 | Canary | RET 변조 감지 |
 | ASLR   | 주소 예측 차단  |
 
-ASLR 이후 공격은
-정보 유출을 동반하는 형태로 진화하였다.
+따라서 ASLR 이후의 공격은 단순 주소 하드코딩 방식이 아니라,</br>
+**정보 유출을 통해 base 주소를 계산하는 방식**으로 발전하였다.
