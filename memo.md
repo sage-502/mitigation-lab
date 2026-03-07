@@ -19,6 +19,10 @@
     - glibc stack_chk_fail 구현
     - System V ABI (x86)
     - stack unwinding
-- [ ] aslr
+- [x] aslr
+  - 시간이 상당히 많이 들었음.
+  - ASLR이 커널 구현이라 리눅스 프로세스 생성 과정을 봐야 했음.
+  - 브루트포스 시도해보고 싶었는데, 엔트로피가 64bit 아키텍쳐로 나온 것 같음. 망함.
+    - 실습을 하려면 애초에 32bit 아키텍쳐 VM을 설치해야 했을 것 같음.
 - [ ] pie
 - [ ] relro
