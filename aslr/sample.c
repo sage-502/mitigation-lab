@@ -10,7 +10,7 @@ void vuln() {
 }
 
 int main() {
-    setregid(getegid(), getegid());
+    setreuid(geteuid(), geteuid());
     setvbuf(stdout, NULL, _IONBF, 0);
     vuln();
     puts("done");
