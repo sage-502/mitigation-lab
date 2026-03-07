@@ -40,7 +40,7 @@ mitigation-lab/
 ## 학습 순서
 1. [nx](https://github.com/sage-502/mitigation-lab/tree/main/nx)
 2. [stack-canary](https://github.com/sage-502/mitigation-lab/tree/main/stack-canary)
-3. aslr
+3. [aslr](https://github.com/sage-502/mitigation-lab/tree/main/aslr)
 4. pie
 5. relro
 
