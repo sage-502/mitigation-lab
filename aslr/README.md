@@ -117,9 +117,9 @@ ASLR은 실행 중에 적용되는 것이 아니라,
 전체 흐름은 다음과 같다.
 
 ```
-execve()
+프로그램 실행 (`execve()`)
   ↓
-커널이 ELF 읽음
+커널이 ELF 읽기
   ↓
 Program Header 기반 mmap
   ↓  (이 시점에 ASLR 적용)
@@ -142,7 +142,7 @@ main() 진입
 내부적으로는 `execve()` 시스템 콜이 호출된다.
 
 
-### 2.2 커널이 ELF 파일 읽기
+### 2.2 커널이 ELF 읽기
 
 커널은 ELF 파일의 전체 구조를 사용하는 것이 아니라,
 실행에 필요한 최소한의 정보만을 읽는다.
@@ -170,7 +170,7 @@ main() 진입
 
 ```
 +---------------------------+
-| e_ident (매직 넘버 등)     |
+| e_ident (매직 넘버 등)    |
 | e_type (ET_EXEC / ET_DYN) |
 | e_entry (entry point)     |
 | e_phoff (PH 위치)         |
@@ -192,7 +192,7 @@ main() 진입
 
 ```
 +--------------------------------------+
-| Type (PT_LOAD 등)                   |
+| Type (PT_LOAD 등)                    |
 | Offset                               |
 | Virtual Address (VirtAddr)           |
 | File Size                            |
@@ -201,11 +201,7 @@ main() 진입
 +--------------------------------------+
 ```
 
-커널은 Program Header의 `PT_LOAD` 항목을 기준으로
-각 세그먼트를 `mmap()` 한다.
-
 ※ Section Header는 실행 시 사용되지 않는다.
-
 
 실행 흐름:
 ```
@@ -218,20 +214,35 @@ e_phoff 확인
 e_phnum 만큼 Program Header 읽음
   ↓
 PT_LOAD 세그먼트 mmap
-  ↓
-e_entry로 점프
 ```
 
-### 2.3 커널이 메모리 배치 (ASLR 적용 시점)
+### 2.3 Program Header 기반 mmap : 커널이 메모리 배치 (ASLR 적용 시점)
 
-커널은 Program Header의 `PT_LOAD` 세그먼트를 기준으로
-각 영역을 `mmap()` 한다.
+커널은 Program Header의 `PT_LOAD` 세그먼트를 file-backed mmap 방식으로 매핑한다.
 
-#### mmap()
+mmap은 파일이나 익명 메모리를 프로세스의 가상 주소 공간에 매핑(mapping)하는 기능이다.</br>
+이 mmap은 3개의 계층에 존재한다.
 
-`mmap()`은 파일이나 메모리 영역을 프로세스 가상 주소 공간에 연결(mapping)하는 시스템 콜이다.
+| 층       | 이름                        | 역할       |
+| ------- | ------------------------- | -------- |
+| 유저 API  | `mmap()`                  | libc 함수  |
+| syscall | `sys_mmap` / `mmap_pgoff` | 커널 진입점   |
+| 커널 내부   | `vm_mmap()` → `do_mmap()` | 실제 매핑 수행 |
 
-mmap의 실제 호출 형태는 다음과 같다:
+실제 흐름은 다음과 같다.
+```
+PT_LOAD 읽음
+↓
+elf_map()
+↓
+vm_mmap()
+↓
+do_mmap()
+```
+
+하지만 자세히 보면 길어지니, 대략적으로 보겠다.
+
+mmap의 호출 형태는 다음과 같다:
 
 ``` c
 void *mmap(
@@ -268,37 +279,19 @@ mmap(0x08048000,
 
 이것이 ELF 로딩에서의 mmap의 의미이다.
 
-정리하자면 mmap은 다음과 같이 메모리를 할당한다.
+정리하자면 mmap은 다음과 같이 가상 메모리 영역을 생성한다.
 
 1. 가상 메모리 영역(VMA) 생성
 2. 페이지 테이블 설정
 3. 실제 페이지는 접근 시 할당(lazy allocation)
 
-#### 1) non-PIE (ET_EXEC)
-
-* 고정 VirtAddr 사용
-* base 고정
-
-``` c
-mmap(0x08048000, ...)
-```
-
-#### 2) PIE / 공유 라이브러리 (ET_DYN)
-
-* VirtAddr가 0 기반
-* 어느 위치에든 매핑 가능
-* 커널이 랜덤 base 선택
-
-``` c
-mmap(NULL, ...)
-```
-
-이때 생성된 base 주소는
-커널의 VMA 구조에 기록되며
-`/proc/<pid>/maps`에서 확인할 수 있다.
+> **노트 ── base 확인**
+> 
+> 이때 생성된 base 주소는 커널의 VMA 구조에 기록되며
+> `/proc/<pid>/maps`에서 확인할 수 있다.
 
 
-### 2.4 stack 배치
+### 2.4 stack 랜덤화
 
 커널은 스택 상단 주소를 랜덤화하고
 초기 ESP를 해당 위치로 설정한다.
@@ -310,9 +303,33 @@ mmap(NULL, ...)
 
 stack 배치는 전부 커널이 처리한다.
 
-### 2.5 ld-linux(동적 링커)
+### 2.5 heap 랜덤화
 
-#### 1) libc를 mmap
+heap은 `brk` 영역의 base 주소를 랜덤화하는 방식으로
+ASLR이 적용된다.
+
+프로세스 생성 시 커널은 `mm_struct` 내부의 heap 시작 주소를 랜덤 오프셋으로 설정한다.
+
+```
+mm_struct
+├─ start_brk  ← heap 시작
+└─ brk        ← 현재 heap 끝
+```
+
+즉 heap base는 다음과 같이 결정된다.
+
+```
+heap_base = base + random_offset
+```
+
+이후 `malloc()`이 heap을 확장할 경우,
+glibc는 `brk()`라는 시스템 콜을 사용하여 `brk` 값을 증가시킨다.
+
+큰 메모리 할당의 경우 `mmap()`을 사용하여
+별도의 VMA가 생성되기도 한다.
+
+
+### 2.6 libc 랜덤화 
 
 동적 링크 바이너리의 경우,
 ld-linux(동적 링커)가 ELF 안에 있는 동적 섹션(.dynamic)을 보고 libc 등을 `mmap()` 한다.
@@ -335,12 +352,12 @@ ld-linux(동적 링커)가 ELF 안에 있는 동적 섹션(.dynamic)을 보고 l
 즉, ld-linux가 필요한 라이브러리를 확인하고 mmap을 요청하면,
 커널이 ASLR 정책에 따라 랜덤 base를 결정하여 반환한다.
 
-#### 2) relocation
+### 2.7 ld-linux(동적 링커)가 relocation 수행
 
 libc가 mmap되면 ld-linux는 각 라이브러리의 base를 기준으로
 GOT, PLT 등의 실제 주소를 계산하여 채운다.
 
-#### 3) main() 진입
+### 2.8 main() 진입
 
 이 시점에서 프로세스의 주소 공간은
 이미 랜덤화가 완료된 상태이다.
