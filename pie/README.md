@@ -262,7 +262,7 @@ if (elf_ex->e_type != ET_EXEC && elf_ex->e_type != ET_DYN)
 ```
 
 e_type에 따른 로딩:
-```
+``` c
 if (!first_pt_load) {
     /* 첫 LOAD segment 처리 */
 } else if (elf_ex->e_type == ET_EXEC) {
@@ -274,7 +274,7 @@ if (!first_pt_load) {
 
 ET_DYN 실행파일(PIE)의 경우 커널은 먼저 load_bias를 결정한다.
 
-```
+``` c
 load_bias = ELF_ET_DYN_BASE;
 ```
 ELF_ET_DYN_BASE는 커널이 PIE 프로그램을 로드할 기본 주소로,
@@ -284,7 +284,7 @@ load_bias는 ELF_ET_DYN_BASE를 기준으로 설정되며,
 ASLR이 활성화된 경우 arch_mmap_rnd()를 통해 생성된
 랜덤 오프셋이 추가된다.
 
-```
+``` c
 if (current->flags & PF_RANDOMIZE)
     load_bias += arch_mmap_rnd();
 ```
