@@ -252,7 +252,7 @@ load_elf_binary
 
 이 함수에서 e_type에 따른 조건 분기 코드 확인이 가능하다.
 
-### 3.3 실제 코드 발췌 ([linux/fs/binfmt_elf.c](https://github.com/torvalds/linux/blob/master/fs/binfmt_elf.c))
+### 3.3 실제 코드 발췌 (from [Linux kernel lfs/binfmt_elf.c](https://github.com/torvalds/linux/blob/master/fs/binfmt_elf.c), GPLv2)
 
 e_type이 ET_EXEC 혹은 ET_DYN이 아니라면 out:
 ``` c
