@@ -322,9 +322,133 @@ real_address = load_bias + p_vaddr
 
 ## 4. 실습 구성
 
+이번 실습에서는 간단한 BOF 취약점이 존재하는 소스코드를 
+PIE on/off의 2가지 버전으로 빌드하여 동작을 비교한다. 
+
+두 바이너리에 ret2win 기법을 사용한 동일 페이로드를 사용하여
+왜 공격이 성공 혹은 실패하는지 확인하는 것을 목표로 한다.
+
+### 4.1 취약 코드
+
+``` c
+// filename: sample.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+void win(){
+    setregid(getegid(), getegid());
+    system("/bin/sh");
+}
+
+void vuln(){
+    char buf[24];
+    puts("input:");
+    gets(buf);
+}
+
+int main(){
+    vuln();
+}
+```
+
+#### 코드 특징
+
+* `char buf[24]` : 고정 길이 버퍼
+* `gets(buf)` : 입력 크기 제한 없음 → **Stack Buffer Overflow** 발생
+* `win()` 함수 존재 → RET overwrite 성공 시 control flow 탈취 지점
+
+### 4.2 컴파일 옵션
+
+#### 1) PIE off
+
+| 옵션         | 역할                  |
+| ---------- | ------------------- |
+| `-fno-pie` | 컴파일러 (PIC 코드 생성 안함) |
+| `-no-pie`  | 링커 (ET_EXEC 생성)     |
+
+#### 2) PIE on
+
+| 옵션      | 역할             |
+| ------- | -------------- |
+| `-fPIE` | PIC 코드 생성      |
+| `-pie`  | ET_DYN 실행파일 생성 |
+
+#### 3) 공통
+
+* `-m32`
+* `-O0`
+* `-fno-omit-frame-pointer`
+* `-z noexecstack` : NX on
+* `-fno-stack-protector` : Canary off
+* `-Wl,-z,relro` / `-Wl,-z,lazy` : Partial RELRO
+
 ---
 
 ## 5. PIE off
+
+### 5.1 vuln() 스택 프레임
+
+프롤로그:
+
+``` gdb
+   0x080491dc <+0>:	push   ebp
+   0x080491dd <+1>:	mov    ebp,esp
+   0x080491df <+3>:	sub    esp,0x28
+```
+
+buf 주소:
+
+``` gdb
+   0x080491f5 <+25>:	lea    eax,[ebp-0x20]
+   0x080491f8 <+28>:	push   eax
+   0x080491f9 <+29>:	call   0x8049040 <gets@plt>
+```
+
+스택 레이아웃:
+
+```
+높은 주소
++--------------------+
+|     saved RET      |
++--------------------+
+|     saved EBP      |
++--------------------+ ← ebp
+|         ...        |
++--------------------+
+|                    | buf
++--------------------+ [ebp-0x20]
+낮은 주소
+```
+
+### 5.2 익스플로잇
+
+`vuln()`의 saved RET를 `win()` 주소로 overwrite하여 control flow를 변경한다.
+
+#### offset
+
+&buf가 ebp-0x20 이므로</br>
+offset = 0x20 + 0x4(saved EBP size) = 0x24 (36bytes)
+
+#### win() 주소
+
+``` gdb
+(gdb) info address win
+Symbol "win" is at 0x80491a6 in a file compiled without debugging.
+```
+
+`win()` 함수 시작 주소 = 0x080491a6
+
+#### 페이로드 구조
+
+페이로드 구조는 다음과 같다.
+```
+payload = [padding] + [win() addr]
+```
+
+### 5.3 결과
+
+
 
 ---
 
