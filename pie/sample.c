@@ -4,7 +4,7 @@
 #include <unistd.h>
 
 void win(){
-    setreuid(geteuid(), geteuid());
+    setregid(getegid(), getegid());
     system("/bin/sh");
 }
 
