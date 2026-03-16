@@ -41,7 +41,7 @@ mitigation-lab/
 1. [nx](https://github.com/sage-502/mitigation-lab/tree/main/nx)
 2. [stack-canary](https://github.com/sage-502/mitigation-lab/tree/main/stack-canary)
 3. [aslr](https://github.com/sage-502/mitigation-lab/tree/main/aslr)
-4. pie
+4. [pie](https://github.com/sage-502/mitigation-lab/tree/main/pie)
 5. relro
 
 ---
