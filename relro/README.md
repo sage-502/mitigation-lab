@@ -348,6 +348,64 @@ Full RELRO는 `-z now`를 함께 사용하여 프로그램 시작 시 모든 rel
 
 ## 6. 실습 구성
 
+이번 실습에서는 간단한 FSB 취약점이 존재하는 소스코드를 
+Partial/Full RELRO의 2가지 버전으로 빌드하여 동작을 비교한다. 
+
+두 바이너리에 GOT overwrite 기법을 사용한 동일 페이로드를 사용하여 
+왜 공격이 성공 혹은 실패하는지 확인하는 것을 목표로 한다.
+
+### 4.1 취약 코드
+
+``` c
+// filename: sample.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main() {
+    char buf[128];
+
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setregid(getegid(), getegid());
+
+    puts("input:");
+    fgets(buf, sizeof(buf), stdin);
+    printf(buf);
+
+    puts("/bin/sh");
+
+    return 0;
+}
+```
+
+#### 코드 특징
+
+* `printf(buf)`: Format String Bug
+* `puts("/bin/sh")`: `puts()` 대신 `system()` 이 호출되도록 하면 쉘 획득 가능
+
+### 4.2 컴파일 옵션
+
+#### 1) Partial RELRO
+
+| 옵션 | 목적 |
+| --- | --- |
+| `-Wl,-z,lazy` | lazy binding |
+
+#### 2) Full RELRO
+
+| 옵션 | 목적 |
+| --- | --- |
+| `-Wl,-z,now` | eager binding |
+
+#### 3) 공통
+
+* `-m32`
+* `-O0`
+* `-fno-omit-frame-pointer`
+* `-z noexecstack` : NX on
+* `-fno-stack-protector` : Canary off
+* `-fno-pie` / `-no-pie` : PIE off
+* `-Wl,-z,relro` : ELF에 `PT_GNU_RELRO` 생성
 ---
 
 ## 7. Full RELRO
