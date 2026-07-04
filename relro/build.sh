@@ -1,0 +1,97 @@
+#!/bin/bash
+set -e
+
+# ================================
+# LAB 별 변경 사항
+#   1) NAME
+#   2) COMMON/ON/OFF_OPT
+#   3) ASLR 안내
+# ================================
+
+NAME="relro"
+LAB_NAME="$NAME-lab"
+TMP_DIR="/tmp/$LAB_NAME"
+SRC="sample.c"
+BIN1="$NAME-partial"
+BIN2="$NAME-full"
+
+# =====================
+# 1. 디렉터리 준비
+# =====================
+echo "[*] build $LAB_NAME"
+
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
+
+# =====================
+# 2. 소스코드 복사
+# =====================
+if [[ ! -f "$SRC" ]]; then
+    echo "[!] source file not found: $SRC"
+    exit 1
+fi
+
+cp "$SRC" "$TMP_DIR/"
+echo "[+] source copied"
+
+# =====================
+# 3. 컴파일
+# =====================
+echo "[*] compiling binaries"
+
+# 공통 옵션
+COMMON_OPT=(
+    -m32
+    -O0
+    -fno-omit-frame-pointer
+    -z noexecstack
+    -fno-stack-protector
+    -fno-pie, -no-pie
+    -Wl,-z,relro
+)
+
+# 개별 옵션
+OFF_OPT=(
+    -Wl,-z,lazy
+)
+
+ON_OPT=(
+    -Wl,-z,now
+)
+
+# OFF build
+gcc "${COMMON_OPT[@]}" "${OFF_OPT[@]}" \
+    "$TMP_DIR/$SRC" -o "$TMP_DIR/$BIN1"
+
+# ON build
+gcc "${COMMON_OPT[@]}" "${ON_OPT[@]}" \
+    "$TMP_DIR/$SRC" -o "$TMP_DIR/$BIN2"
+
+echo "[+] build complete"
+
+# =====================
+# 4. 권한 설정
+# =====================
+if [[ $EUID -ne 0 ]]; then
+    echo "[!] Not running as root. Skipping setuid setup."
+else
+    chown root:root "$TMP_DIR/$BIN1" "$TMP_DIR/$BIN2"
+    chmod 4755 "$TMP_DIR/$BIN1" "$TMP_DIR/$BIN2"
+fi
+
+# =====================
+# 5. 정보 출력
+# =====================
+echo ""
+echo "[+] $NAME disabled binary: $TMP_DIR/$BIN1"
+file "$TMP_DIR/$BIN1"
+checksec --file="$TMP_DIR/$BIN1"
+
+echo ""
+echo "[+] $NAME enabled binary: $TMP_DIR/$BIN2"
+file "$TMP_DIR/$BIN2"
+checksec --file="$TMP_DIR/$BIN2"
+
+echo ""
+echo "[!] Enable ASLR to apply PIE:"
+echo "    echo 2 | sudo tee /proc/sys/kernel/randomize_va_space"
