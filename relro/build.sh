@@ -46,7 +46,8 @@ COMMON_OPT=(
     -fno-omit-frame-pointer
     -z noexecstack
     -fno-stack-protector
-    -fno-pie, -no-pie
+    -fno-pie
+    -no-pie
     -Wl,-z,relro
 )
 
