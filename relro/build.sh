@@ -94,5 +94,5 @@ file "$TMP_DIR/$BIN2"
 checksec --file="$TMP_DIR/$BIN2"
 
 echo ""
-echo "[!] Enable ASLR to apply PIE:"
-echo "    echo 2 | sudo tee /proc/sys/kernel/randomize_va_space"
+echo "[!] Disable ASLR if needed:"
+echo "    echo 0 | sudo tee /proc/sys/kernel/randomize_va_space"
