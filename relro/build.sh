@@ -84,12 +84,12 @@ fi
 # 5. 정보 출력
 # =====================
 echo ""
-echo "[+] $NAME disabled binary: $TMP_DIR/$BIN1"
+echo "[+] Partial $NAME binary: $TMP_DIR/$BIN1"
 file "$TMP_DIR/$BIN1"
 checksec --file="$TMP_DIR/$BIN1"
 
 echo ""
-echo "[+] $NAME enabled binary: $TMP_DIR/$BIN2"
+echo "[+] Full $NAME binary: $TMP_DIR/$BIN2"
 file "$TMP_DIR/$BIN2"
 checksec --file="$TMP_DIR/$BIN2"
 
