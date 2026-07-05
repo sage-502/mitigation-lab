@@ -30,7 +30,6 @@ mitigation-lab/
 ├── aslr/
 ├── pie/
 ├── relro/
-├── combo/
 ├── memo.md                // 메모
 └── images/                // VM 스샷
 ```
