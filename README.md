@@ -1,7 +1,7 @@
 # mitigation-lab
 
 바이너리 보호기법 공부 기록 모음집
-</br>([pwnable-lab](https://github.com/sage-502/pwnable-lab)의 후속 실습)
+</br>([stack-lab](https://github.com/sage-502/stack-lab)의 후속 실습)
 
 이 레포는 각종 **바이너리 보호기법(mitigations)** 이 실제로 **어디에서 공격을 차단하는지**를 코드, 컴파일 옵션, 디버깅을 통해 확인하는 것을 목표로 한다.
 
