@@ -14,7 +14,7 @@
 
 - [x] stack canary
   - abort 후 backtrace 했을 때 #11까지 나옴. 아직 잘 모르겠음. 필요하다는 거 일단 메모.
-    -  Linux signal handling
+    - Linux signal handling
     - abort() 내부 동작
     - glibc stack_chk_fail 구현
     - System V ABI (x86)
@@ -29,4 +29,6 @@
   - PIC는 아직 잘 모르겠음 → 나중에 더 봐야할 것 같다...
   - PIC인 것과 아닌 경우의 함수 호출 흐름 알아보는 것도 재밌을 것 같음.
   - PIE는 64bit로도 공부해보는 게 좋을 것 같음. (PIC? 때문에?)
-- [ ] relro
+- [x] relro
+  - ELF 생성 과정이랑 실행 과정 공부도 따로 하면 좋을 것 같음.
+  - 컴파일러, 링커, 로더가 각각 뭘 보고 뭘 하는지 정리하면 재밌겠다 싶었음.
